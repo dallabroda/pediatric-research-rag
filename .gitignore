@@ -20,6 +20,8 @@ build/
 
 # AWS
 .aws/
+*accessKeys*.csv
+*credentials*.csv
 
 # Data (don't commit downloaded papers or index)
 data/sample/*.pdf
