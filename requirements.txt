@@ -1,0 +1,27 @@
+# AWS
+boto3>=1.34.0
+
+# PDF Parsing
+pypdf>=4.0.0
+pdfplumber>=0.10.0
+
+# HTTP
+requests>=2.31.0
+
+# Vector Store
+faiss-cpu>=1.7.4
+numpy>=1.26.0
+
+# MCP Server
+fastmcp>=0.3.0
+
+# UI
+streamlit>=1.32.0
+
+# Testing
+pytest>=8.0.0
+moto>=5.0.0
+responses>=0.25.0
+
+# Utils
+python-dotenv>=1.0.0
