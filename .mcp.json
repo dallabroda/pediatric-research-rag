@@ -1,0 +1,42 @@
+{
+  "mcpServers": {
+    "aws-documentation": {
+      "command": "uvx",
+      "args": ["awslabs.aws-documentation-mcp-server@latest"],
+      "env": {
+        "FASTMCP_LOG_LEVEL": "WARNING"
+      },
+      "description": "Search AWS documentation for Bedrock, Lambda, S3, API Gateway APIs"
+    },
+    "s3": {
+      "command": "uvx",
+      "args": ["awslabs.s3-mcp-server@latest"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE}",
+        "AWS_REGION": "us-east-1",
+        "FASTMCP_LOG_LEVEL": "WARNING"
+      },
+      "description": "Manage S3 buckets and objects for raw docs and FAISS index"
+    },
+    "lambda": {
+      "command": "uvx",
+      "args": ["awslabs.lambda-mcp-server@latest"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE}",
+        "AWS_REGION": "us-east-1",
+        "FASTMCP_LOG_LEVEL": "WARNING"
+      },
+      "description": "Deploy and test Lambda functions"
+    },
+    "bedrock": {
+      "command": "uvx",
+      "args": ["awslabs.bedrock-mcp-server@latest"],
+      "env": {
+        "AWS_PROFILE": "${AWS_PROFILE}",
+        "AWS_REGION": "us-east-1",
+        "FASTMCP_LOG_LEVEL": "WARNING"
+      },
+      "description": "Test Bedrock Titan embeddings and Claude LLM calls"
+    }
+  }
+}

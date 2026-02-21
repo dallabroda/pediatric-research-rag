@@ -1,0 +1,38 @@
+# Environment
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# AWS
+.aws/
+
+# Data (don't commit downloaded papers or index)
+data/sample/*.pdf
+data/sample/*.json
+data/index/
+
+# Lambda packages
+lambdas/*/package/
+lambdas/*/*.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
