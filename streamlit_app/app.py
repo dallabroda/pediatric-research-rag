@@ -17,17 +17,50 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def get_config(key: str, default: str = "") -> str:
+    """
+    Get configuration value from environment or Streamlit secrets.
+
+    Checks in order:
+    1. Environment variables (for Docker/local)
+    2. Streamlit secrets (for Streamlit Cloud)
+    3. Default value
+    """
+    # Check environment first
+    value = os.environ.get(key)
+    if value:
+        return value
+
+    # Check Streamlit secrets (Streamlit Cloud)
+    try:
+        if hasattr(st, "secrets") and key in st.secrets:
+            # Also set as environment variable for boto3 to pick up
+            value = st.secrets[key]
+            os.environ[key] = value
+            return value
+    except Exception:
+        pass
+
+    return default
+
+
+# Configuration - supports both env vars and Streamlit secrets
+S3_BUCKET = get_config("S3_BUCKET", "pediatric-research-rag")
+LOCAL_INDEX_DIR = get_config("LOCAL_INDEX_DIR", "data/index")
+LLM_MODEL_ID = get_config("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+MAX_TOKENS = int(get_config("MAX_TOKENS", "1024"))
+
+# Ensure AWS credentials are loaded from secrets if present
+get_config("AWS_ACCESS_KEY_ID")
+get_config("AWS_SECRET_ACCESS_KEY")
+get_config("AWS_REGION", "us-east-1")
+
 from lambdas.query.prompts import ContextChunk, build_no_context_response, build_user_prompt, SYSTEM_PROMPT
 from lambdas.query.retriever import FAISSRetriever
 from streamlit_app.components.chat import add_assistant_message, add_user_message, clear_chat, render_chat
 from streamlit_app.components.citations import render_citations
 from streamlit_app.components.sidebar import render_sidebar
-
-# Configuration
-S3_BUCKET = os.environ.get("S3_BUCKET", "pediatric-research-rag")
-LOCAL_INDEX_DIR = os.environ.get("LOCAL_INDEX_DIR", "data/index")
-LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1024"))
 
 # Page config
 st.set_page_config(
@@ -51,9 +84,12 @@ def get_retriever() -> FAISSRetriever:
 def get_bedrock_client():
     """Get cached Bedrock client."""
     import boto3
+
+    region = get_config("AWS_REGION", "us-east-1")
+
     return boto3.client(
         "bedrock-runtime",
-        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+        region_name=region,
     )
 
 

@@ -32,6 +32,19 @@ data/index/
 lambdas/*/package/
 lambdas/*/*.zip
 
+# Deploy artifacts
+deploy/package/
+deploy/*.zip
+deploy/layer.zip
+
+# Local FAISS index
+faiss_index/
+*.faiss
+
+# Downloaded data
+data/papers/
+data/trials/
+
 # OS
 .DS_Store
 Thumbs.db

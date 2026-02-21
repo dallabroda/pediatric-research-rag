@@ -121,6 +121,61 @@ cd deploy
 ./deploy_lambdas.sh # Package and deploy Lambda functions
 ```
 
+## Docker Setup
+
+For consistent builds (especially Lambda layers with Linux binaries):
+
+### Run Streamlit with Docker
+```bash
+# Build and run
+docker-compose up
+
+# Access at http://localhost:8501
+```
+
+Set AWS credentials via environment variables or `.env` file:
+```env
+AWS_ACCESS_KEY_ID=your-key
+AWS_SECRET_ACCESS_KEY=your-secret
+AWS_REGION=us-east-1
+S3_BUCKET=pediatric-research-rag
+```
+
+### Build Lambda Layer (Linux binaries)
+```bash
+# Build layer with Docker (required when deploying from Windows/Mac)
+./scripts/build_lambda_layer.sh
+
+# Build and deploy to AWS
+./scripts/build_lambda_layer.sh --deploy
+```
+
+### Download data + build index with Docker
+```bash
+docker-compose run app python scripts/download_papers.py --count 15
+docker-compose run app python scripts/download_trials.py --count 10
+docker-compose run app python scripts/seed_index.py --upload-to-s3
+```
+
+## Streamlit Cloud Deployment
+
+To deploy to Streamlit Cloud, add these secrets in the Streamlit Cloud dashboard:
+
+| Secret | Value |
+|--------|-------|
+| `AWS_ACCESS_KEY_ID` | Your AWS access key |
+| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
+| `AWS_REGION` | `us-east-1` |
+| `S3_BUCKET` | `pediatric-research-rag` |
+
+Navigate to your app settings > Secrets and add them in TOML format:
+```toml
+AWS_ACCESS_KEY_ID = "your-key"
+AWS_SECRET_ACCESS_KEY = "your-secret"
+AWS_REGION = "us-east-1"
+S3_BUCKET = "pediatric-research-rag"
+```
+
 ## MCP Server
 
 The MCP server exposes pediatric cancer research as tools accessible from Claude Desktop or any MCP-compatible client.

@@ -1,0 +1,31 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+      - ./faiss_index:/app/faiss_index
+    environment:
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - S3_BUCKET=${S3_BUCKET:-pediatric-research-rag}
+      - LLM_MODEL_ID=${LLM_MODEL_ID:-anthropic.claude-3-haiku-20240307-v1:0}
+      - EMBEDDING_MODEL_ID=${EMBEDDING_MODEL_ID:-amazon.titan-embed-text-v2:0}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    # Alternative: mount AWS credentials file (uncomment if preferred)
+    # volumes:
+    #   - ~/.aws:/root/.aws:ro
+    restart: unless-stopped
+
+  # One-off container for building Lambda layer
+  lambda-layer:
+    build:
+      context: .
+      dockerfile: Dockerfile.lambda
+    volumes:
+      - ./deploy:/output
+    profiles:
+      - build  # Only runs with: docker-compose --profile build run lambda-layer

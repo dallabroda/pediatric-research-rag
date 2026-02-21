@@ -1,0 +1,24 @@
+# Lambda layer builder - produces Linux-compatible binaries
+# Usage:
+#   docker build -f Dockerfile.lambda -t lambda-layer-builder .
+#   docker run --rm -v $(pwd)/deploy:/output lambda-layer-builder
+
+FROM public.ecr.aws/lambda/python:3.12
+
+# Install dependencies into /opt/python (Lambda layer structure)
+RUN pip install \
+    faiss-cpu==1.7.4 \
+    numpy==1.26.4 \
+    boto3==1.34.0 \
+    pypdf==4.0.0 \
+    pdfplumber==0.10.3 \
+    requests==2.31.0 \
+    -t /opt/python
+
+# Create the layer zip
+RUN yum install -y zip && \
+    cd /opt && \
+    zip -r /tmp/layer.zip python
+
+# Default command: copy layer to output volume
+CMD ["sh", "-c", "cp /tmp/layer.zip /output/layer.zip && echo 'Layer zip created at /output/layer.zip'"]
