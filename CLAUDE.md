@@ -22,6 +22,13 @@ A serverless RAG (Retrieval-Augmented Generation) system on AWS that enables nat
 - MCP server exposes tools, resources, and prompts via FastMCP
 - REST API via API Gateway + Lambda for /query and /documents endpoints
 
+### Secrets Management
+- **ALWAYS store credentials in GitHub Secrets** — never commit passwords, API keys, or credentials to the repo
+- AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) must be stored in GitHub Secrets for CI/CD
+- Any API keys, tokens, or sensitive config go in GitHub Secrets, not in code or `.env` files committed to repo
+- For local development, use `.env` file (already in `.gitignore`)
+- When setting up GitHub Actions, reference secrets via `${{ secrets.SECRET_NAME }}`
+
 ### Code Style
 - **NO frameworks:** Do not use LangChain, LlamaIndex, or any RAG framework. All RAG logic is implemented directly with boto3 + FAISS.
 - Always use boto3 for AWS calls, never subprocess/aws cli in Python code
