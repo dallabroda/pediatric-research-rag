@@ -4,9 +4,11 @@ Text chunking for RAG ingestion.
 Implements recursive character splitting with configurable chunk size and overlap.
 Preserves paragraph boundaries and tracks metadata per chunk.
 """
+import hashlib
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,7 @@ class Chunk:
 @dataclass
 class ChunkMetadata:
     """Full metadata for a chunk in the index."""
+    # Core identification
     chunk_id: str
     document_id: str
     chunk_text: str
@@ -48,6 +51,79 @@ class ChunkMetadata:
     source_url: Optional[str]
     doc_title: str
     doc_type: str
+
+    # Lineage fields
+    ingestion_timestamp: str = ""  # ISO 8601
+    parser_name: str = ""  # "PDFParser", "ClinicalTrialParser", etc.
+    parser_version: str = "1.0.0"
+    document_hash: str = ""  # SHA256 of original document text
+    extraction_confidence: float = 1.0  # 0.0-1.0
+
+    # Quality metrics
+    char_count: int = 0
+    word_count: int = 0
+    avg_word_length: float = 0.0
+    whitespace_ratio: float = 0.0
+    has_ocr_artifacts: bool = False
+
+
+@dataclass
+class LineageInfo:
+    """Lineage information for tracking document provenance."""
+    parser_name: str
+    parser_version: str
+    document_hash: str
+    ingestion_timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+def compute_document_hash(text: str) -> str:
+    """
+    Compute SHA256 hash of document text for lineage tracking.
+
+    Args:
+        text: Document text to hash
+
+    Returns:
+        SHA256 hash as hex string
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def compute_chunk_quality_metrics(text: str) -> dict:
+    """
+    Compute quality metrics for a text chunk.
+
+    Args:
+        text: Chunk text to analyze
+
+    Returns:
+        Dictionary with quality metrics
+    """
+    char_count = len(text)
+    words = text.split()
+    word_count = len(words)
+    avg_word_length = sum(len(w) for w in words) / word_count if word_count > 0 else 0.0
+    whitespace_count = sum(1 for c in text if c.isspace())
+    whitespace_ratio = whitespace_count / char_count if char_count > 0 else 0.0
+
+    # Detect common OCR artifacts
+    ocr_artifact_patterns = [
+        r"[^\x00-\x7F]{3,}",  # Long sequences of non-ASCII
+        r"\b[A-Z]{10,}\b",  # Long all-caps words (likely OCR errors)
+        r"(?<!\d)[0oO]{3,}(?!\d)",  # Repeated 0/o/O (common OCR confusion)
+        r"[|!l1I]{5,}",  # Confused vertical characters
+    ]
+    has_ocr_artifacts = any(
+        re.search(pattern, text) for pattern in ocr_artifact_patterns
+    )
+
+    return {
+        "char_count": char_count,
+        "word_count": word_count,
+        "avg_word_length": avg_word_length,
+        "whitespace_ratio": whitespace_ratio,
+        "has_ocr_artifacts": has_ocr_artifacts,
+    }
 
 
 def estimate_tokens(text: str) -> int:
@@ -230,6 +306,8 @@ def chunk_document(
     source_url: Optional[str] = None,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    lineage: Optional[LineageInfo] = None,
+    extraction_confidence: float = 1.0,
 ) -> list[ChunkMetadata]:
     """
     Chunk a document and create metadata for each chunk.
@@ -244,12 +322,20 @@ def chunk_document(
         source_url: Source URL for the document
         chunk_size: Target tokens per chunk
         chunk_overlap: Overlap tokens between chunks
+        lineage: Optional lineage information for provenance tracking
+        extraction_confidence: Confidence score for the extraction (0.0-1.0)
 
     Returns:
         List of ChunkMetadata objects ready for embedding
     """
     # Split text into chunks
     raw_chunks = split_text(text, chunk_size, chunk_overlap)
+
+    # Compute document hash once
+    document_hash = compute_document_hash(text)
+
+    # Get current timestamp
+    ingestion_timestamp = datetime.now(timezone.utc).isoformat()
 
     metadata_list = []
 
@@ -269,7 +355,11 @@ def chunk_document(
         # Create unique chunk ID
         chunk_id = f"{document_id}_chunk_{chunk.chunk_index}"
 
+        # Compute quality metrics for this chunk
+        quality_metrics = compute_chunk_quality_metrics(chunk.text)
+
         metadata = ChunkMetadata(
+            # Core fields
             chunk_id=chunk_id,
             document_id=document_id,
             chunk_text=chunk.text,
@@ -279,6 +369,18 @@ def chunk_document(
             source_url=source_url,
             doc_title=doc_title,
             doc_type=doc_type,
+            # Lineage fields
+            ingestion_timestamp=lineage.ingestion_timestamp if lineage else ingestion_timestamp,
+            parser_name=lineage.parser_name if lineage else "",
+            parser_version=lineage.parser_version if lineage else "1.0.0",
+            document_hash=lineage.document_hash if lineage else document_hash,
+            extraction_confidence=extraction_confidence,
+            # Quality metrics
+            char_count=quality_metrics["char_count"],
+            word_count=quality_metrics["word_count"],
+            avg_word_length=quality_metrics["avg_word_length"],
+            whitespace_ratio=quality_metrics["whitespace_ratio"],
+            has_ocr_artifacts=quality_metrics["has_ocr_artifacts"],
         )
 
         metadata_list.append(metadata)

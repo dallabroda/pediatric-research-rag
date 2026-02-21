@@ -1,0 +1,1 @@
+"""Lineage tracking Lambda handler."""

@@ -8,6 +8,7 @@ Rate limit: 3 requests/second without API key.
 import argparse
 import json
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,6 +16,11 @@ from typing import Optional
 from xml.etree import ElementTree
 
 import requests
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lambdas.shared.retry import retry_with_backoff
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,6 +48,7 @@ class PaperMetadata:
     source_url: str
 
 
+@retry_with_backoff(max_retries=3, base_delay=1.0)
 def search_pmc(query: str, max_results: int = 15) -> list[str]:
     """
     Search PubMed Central for articles matching the query.
@@ -75,6 +82,7 @@ def search_pmc(query: str, max_results: int = 15) -> list[str]:
     return pmc_ids
 
 
+@retry_with_backoff(max_retries=3, base_delay=1.0)
 def get_article_metadata(pmc_id: str) -> dict:
     """
     Fetch article metadata from PMC using efetch.
@@ -168,6 +176,7 @@ def get_article_metadata(pmc_id: str) -> dict:
     return metadata
 
 
+@retry_with_backoff(max_retries=3, base_delay=1.0)
 def get_pdf_url(pmc_id: str) -> Optional[str]:
     """
     Get the PDF download URL from PMC Open Access Web Service.
@@ -203,6 +212,34 @@ def get_pdf_url(pmc_id: str) -> Optional[str]:
     return None
 
 
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=30.0)
+def _download_pdf_with_retry(url: str, output_path: Path) -> None:
+    """
+    Internal function to download PDF with retry logic.
+
+    Args:
+        url: URL to download from
+        output_path: Path to save the PDF
+
+    Raises:
+        requests.RequestException: On download failure
+    """
+    time.sleep(REQUEST_DELAY)
+
+    # Handle FTP URLs by converting to HTTPS
+    if url.startswith("ftp://"):
+        url = url.replace("ftp://ftp.ncbi.nlm.nih.gov", "https://ftp.ncbi.nlm.nih.gov")
+
+    response = requests.get(url, timeout=120, stream=True)
+    response.raise_for_status()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(output_path, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+
+
 def download_pdf(url: str, output_path: Path) -> bool:
     """
     Download a PDF file from the given URL.
@@ -215,21 +252,7 @@ def download_pdf(url: str, output_path: Path) -> bool:
         True if successful, False otherwise
     """
     try:
-        time.sleep(REQUEST_DELAY)
-
-        # Handle FTP URLs by converting to HTTPS
-        if url.startswith("ftp://"):
-            url = url.replace("ftp://ftp.ncbi.nlm.nih.gov", "https://ftp.ncbi.nlm.nih.gov")
-
-        response = requests.get(url, timeout=120, stream=True)
-        response.raise_for_status()
-
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(output_path, "wb") as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
-
+        _download_pdf_with_retry(url, output_path)
         logger.info(f"Downloaded: {output_path}")
         return True
 

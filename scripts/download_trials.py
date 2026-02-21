@@ -7,12 +7,18 @@ Fetches trials sponsored by St. Jude Children's Research Hospital.
 import argparse
 import json
 import logging
+import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
 import requests
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from lambdas.shared.retry import retry_with_backoff
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -44,6 +50,23 @@ class TrialMetadata:
     primary_outcomes: list[str] = field(default_factory=list)
     secondary_outcomes: list[str] = field(default_factory=list)
     source_url: str = ""
+
+
+@retry_with_backoff(max_retries=3, base_delay=1.0)
+def _fetch_trials_page(params: dict) -> dict:
+    """
+    Fetch a single page of trials from ClinicalTrials.gov API.
+
+    Args:
+        params: API query parameters
+
+    Returns:
+        JSON response data
+    """
+    time.sleep(REQUEST_DELAY)
+    response = requests.get(CT_API_URL, params=params, timeout=30)
+    response.raise_for_status()
+    return response.json()
 
 
 def search_trials(sponsor: str, max_results: int = 10) -> list[dict]:
@@ -91,11 +114,7 @@ def search_trials(sponsor: str, max_results: int = 10) -> list[dict]:
         if next_page_token:
             params["pageToken"] = next_page_token
 
-        time.sleep(REQUEST_DELAY)
-        response = requests.get(CT_API_URL, params=params, timeout=30)
-        response.raise_for_status()
-
-        data = response.json()
+        data = _fetch_trials_page(params)
         batch = data.get("studies", [])
         studies.extend(batch)
 

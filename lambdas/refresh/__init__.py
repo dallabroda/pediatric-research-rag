@@ -1,0 +1,1 @@
+"""Scheduled refresh Lambda handler."""

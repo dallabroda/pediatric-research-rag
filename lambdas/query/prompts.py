@@ -24,6 +24,77 @@ Response format:
 - If sources conflict, note the discrepancy"""
 
 
+# Cross-document synthesis prompt for multi-source analysis
+CROSS_DOCUMENT_SYSTEM_PROMPT = """You are a research synthesis assistant specializing in pediatric oncology research from St. Jude Children's Research Hospital. Your role is to synthesize findings across multiple research documents to provide comprehensive, evidence-based answers.
+
+When answering:
+1. COMPARE findings across multiple sources
+2. IDENTIFY contradictions or evolution of understanding over time
+3. NOTE publication dates to track research progression
+4. HIGHLIGHT when newer research contradicts older findings
+5. CITE each source with [Source: Title (Year)]
+6. Express CONFIDENCE levels: High/Medium/Low based on evidence consistency
+
+Guidelines for synthesis:
+- Give more weight to more recent sources when evidence conflicts
+- Note the publication dates and study types (clinical trial vs observational)
+- Identify complementary findings that together paint a fuller picture
+- Flag any gaps in the available evidence
+- Never extrapolate beyond what the sources support
+
+Response structure:
+1. Direct answer to the question
+2. Supporting evidence from each source (with citations)
+3. Note any contradictions or evolving understanding
+4. Confidence assessment with reasoning
+"""
+
+
+SYNTHESIS_USER_PROMPT_TEMPLATE = """
+## Research Context (Multiple Sources)
+{context_with_dates}
+
+## Question
+{question}
+
+## Instructions
+1. Synthesize findings across ALL provided sources
+2. If sources disagree, explain the contradiction and which evidence is stronger
+3. Note the chronological progression of research when relevant
+4. Provide a confidence assessment for your answer based on:
+   - Number of agreeing sources
+   - Recency of sources
+   - Study quality (clinical trials > observational studies)
+
+Please provide your synthesis."""
+
+
+LOW_CONFIDENCE_SYSTEM_PROMPT = """You are a helpful research assistant for pediatric cancer research. The available research context is limited for this query. Your role is to:
+
+1. Acknowledge the limitation clearly
+2. Share what relevant information IS available
+3. Suggest alternative approaches or related questions
+4. Never guess or make up information
+
+Be direct about uncertainty while still being helpful."""
+
+
+LOW_CONFIDENCE_USER_PROMPT_TEMPLATE = """
+## Limited Research Context
+{context}
+
+## Question
+{question}
+
+## Note
+The search found limited relevant information. Please:
+1. Share any relevant information that IS available
+2. Clearly state what aspects cannot be answered
+3. Suggest related questions that might yield better results
+4. If the context is marginally relevant, explain why it may not directly answer the question
+"""
+
+
 @dataclass
 class ContextChunk:
     """A chunk of context for the prompt."""
@@ -33,6 +104,13 @@ class ContextChunk:
     source_url: Optional[str] = None
     section_title: Optional[str] = None
     page_number: Optional[int] = None
+
+
+@dataclass
+class ContextChunkWithDate(ContextChunk):
+    """Extended context chunk with date information."""
+    pub_date: Optional[str] = None
+    similarity_score: float = 0.0
 
 
 def format_context_chunk(chunk: ContextChunk, index: int) -> str:
@@ -57,6 +135,37 @@ def format_context_chunk(chunk: ContextChunk, index: int) -> str:
     if chunk.source_url:
         lines.append(f"URL: {chunk.source_url}")
 
+    lines.append("")
+    lines.append(chunk.text)
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def format_context_chunk_with_date(chunk: ContextChunkWithDate, index: int) -> str:
+    """
+    Format a context chunk including publication date for synthesis.
+
+    Args:
+        chunk: Context chunk with date
+        index: Chunk index (1-based)
+
+    Returns:
+        Formatted chunk string with date information
+    """
+    lines = [f"[Source {index}]"]
+    lines.append(f"Document: {chunk.doc_title}")
+    lines.append(f"Type: {chunk.doc_type}")
+
+    if chunk.pub_date:
+        lines.append(f"Publication Date: {chunk.pub_date}")
+
+    if chunk.section_title:
+        lines.append(f"Section: {chunk.section_title}")
+    if chunk.source_url:
+        lines.append(f"URL: {chunk.source_url}")
+
+    lines.append(f"Relevance Score: {chunk.similarity_score:.2f}")
     lines.append("")
     lines.append(chunk.text)
     lines.append("")
@@ -107,6 +216,55 @@ QUESTION:
 Please provide a comprehensive answer based on the research context above. Remember to cite your sources."""
 
     return prompt
+
+
+def build_synthesis_prompt(
+    question: str,
+    context_chunks: list[ContextChunkWithDate],
+) -> str:
+    """
+    Build a synthesis prompt for cross-document analysis.
+
+    Args:
+        question: User's question
+        context_chunks: Retrieved context chunks with dates
+
+    Returns:
+        Complete synthesis prompt
+    """
+    context_sections = []
+    for i, chunk in enumerate(context_chunks, 1):
+        context_sections.append(format_context_chunk_with_date(chunk, i))
+        context_sections.append("-" * 40)
+
+    context_with_dates = "\n".join(context_sections)
+
+    return SYNTHESIS_USER_PROMPT_TEMPLATE.format(
+        context_with_dates=context_with_dates,
+        question=question,
+    )
+
+
+def build_low_confidence_prompt(
+    question: str,
+    context_chunks: list[ContextChunk],
+) -> str:
+    """
+    Build a prompt for low-confidence scenarios.
+
+    Args:
+        question: User's question
+        context_chunks: Retrieved context chunks (may be marginally relevant)
+
+    Returns:
+        Complete low-confidence prompt
+    """
+    context = build_context_prompt(context_chunks)
+
+    return LOW_CONFIDENCE_USER_PROMPT_TEMPLATE.format(
+        context=context,
+        question=question,
+    )
 
 
 def build_no_context_response(question: str) -> str:

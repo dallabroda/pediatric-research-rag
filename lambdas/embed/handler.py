@@ -7,14 +7,20 @@ then builds/updates the FAISS index.
 import json
 import logging
 import os
-import time
+import sys
 from io import BytesIO
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
 import boto3
 import faiss
 import numpy as np
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from shared.retry import retry_with_backoff
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -26,6 +32,7 @@ EMBEDDING_DIMENSION = 1024
 INDEX_PREFIX = os.environ.get("INDEX_PREFIX", "processed/index/")
 FAISS_INDEX_FILE = "faiss_index.bin"
 FAISS_METADATA_FILE = "faiss_metadata.json"
+METRICS_NAMESPACE = "PediatricRAG"
 
 
 def get_bedrock_client():
@@ -38,6 +45,61 @@ def get_s3_client():
     return boto3.client("s3")
 
 
+def get_cloudwatch_client():
+    """Get boto3 CloudWatch client."""
+    return boto3.client("cloudwatch")
+
+
+def publish_metrics(
+    documents_processed: int,
+    chunks_created: int,
+    avg_confidence: float,
+    failed_documents: int,
+) -> None:
+    """
+    Publish processing metrics to CloudWatch.
+
+    Args:
+        documents_processed: Number of documents processed
+        chunks_created: Number of chunks created
+        avg_confidence: Average extraction confidence
+        failed_documents: Number of failed documents
+    """
+    try:
+        cloudwatch = get_cloudwatch_client()
+
+        cloudwatch.put_metric_data(
+            Namespace=METRICS_NAMESPACE,
+            MetricData=[
+                {
+                    "MetricName": "DocumentsProcessed",
+                    "Value": documents_processed,
+                    "Unit": "Count",
+                },
+                {
+                    "MetricName": "ChunksCreated",
+                    "Value": chunks_created,
+                    "Unit": "Count",
+                },
+                {
+                    "MetricName": "AvgExtractionConfidence",
+                    "Value": avg_confidence,
+                    "Unit": "None",
+                },
+                {
+                    "MetricName": "FailedDocuments",
+                    "Value": failed_documents,
+                    "Unit": "Count",
+                },
+            ],
+        )
+        logger.info("Published metrics to CloudWatch")
+
+    except Exception as e:
+        logger.warning(f"Failed to publish metrics: {e}")
+
+
+@retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
 def get_embedding(text: str, bedrock_client=None) -> list[float]:
     """
     Get embedding for text using Bedrock Titan Embeddings V2.
@@ -59,27 +121,15 @@ def get_embedding(text: str, bedrock_client=None) -> list[float]:
         "normalize": True,  # L2 normalize for cosine similarity
     })
 
-    # Retry with exponential backoff for throttling
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = bedrock_client.invoke_model(
-                modelId=EMBEDDING_MODEL_ID,
-                body=body,
-                contentType="application/json",
-                accept="application/json",
-            )
+    response = bedrock_client.invoke_model(
+        modelId=EMBEDDING_MODEL_ID,
+        body=body,
+        contentType="application/json",
+        accept="application/json",
+    )
 
-            response_body = json.loads(response["body"].read())
-            return response_body["embedding"]
-
-        except bedrock_client.exceptions.ThrottlingException:
-            if attempt < max_retries - 1:
-                wait_time = 2 ** attempt
-                logger.warning(f"Throttled, retrying in {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                raise
+    response_body = json.loads(response["body"].read())
+    return response_body["embedding"]
 
 
 def embed_chunks(chunks: list[dict], bedrock_client=None) -> tuple[np.ndarray, list[dict]]:
@@ -300,7 +350,16 @@ def handler(event: dict, context: Any) -> dict:
         bedrock = get_bedrock_client()
         embeddings, valid_chunks = embed_chunks(all_chunks, bedrock)
 
+        failed_count = len(all_chunks) - len(valid_chunks)
+
         if len(valid_chunks) == 0:
+            # Publish failure metrics
+            publish_metrics(
+                documents_processed=0,
+                chunks_created=0,
+                avg_confidence=0.0,
+                failed_documents=len(chunk_keys),
+            )
             return {
                 "statusCode": 400,
                 "body": json.dumps({"error": "Failed to embed any chunks"}),
@@ -312,11 +371,31 @@ def handler(event: dict, context: Any) -> dict:
         # Save to S3
         result = save_index_to_s3(index, valid_chunks, bucket)
 
+        # Compute average extraction confidence
+        confidences = [
+            chunk.get("extraction_confidence", 1.0)
+            for chunk in valid_chunks
+        ]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+        # Count unique documents
+        unique_docs = len(set(chunk.get("document_id", "") for chunk in valid_chunks))
+
+        # Publish success metrics
+        publish_metrics(
+            documents_processed=unique_docs,
+            chunks_created=len(valid_chunks),
+            avg_confidence=avg_confidence,
+            failed_documents=failed_count,
+        )
+
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "message": "Index built successfully",
                 "vectors_count": index.ntotal,
+                "documents_processed": unique_docs,
+                "avg_extraction_confidence": round(avg_confidence, 3),
                 "index_key": result["index_key"],
                 "metadata_key": result["metadata_key"],
             }),
@@ -324,6 +403,16 @@ def handler(event: dict, context: Any) -> dict:
 
     except Exception as e:
         logger.exception("Error building index")
+        # Publish error metrics
+        try:
+            publish_metrics(
+                documents_processed=0,
+                chunks_created=0,
+                avg_confidence=0.0,
+                failed_documents=1,
+            )
+        except Exception:
+            pass
         return {
             "statusCode": 500,
             "body": json.dumps({"error": str(e)}),
