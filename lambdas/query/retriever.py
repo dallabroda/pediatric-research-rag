@@ -72,7 +72,9 @@ class FAISSRetriever:
     def bedrock_client(self):
         """Lazy-load Bedrock client."""
         if self._bedrock_client is None:
-            self._bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+            # Read region at runtime, not import time, for Streamlit Cloud compatibility
+            region = os.environ.get("AWS_REGION", "us-east-1")
+            self._bedrock_client = boto3.client("bedrock-runtime", region_name=region)
         return self._bedrock_client
 
     @classmethod
@@ -120,7 +122,9 @@ class FAISSRetriever:
         if bucket is None:
             bucket = S3_BUCKET
 
-        s3 = boto3.client("s3", region_name=AWS_REGION)
+        # Read region at runtime for Streamlit Cloud compatibility
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        s3 = boto3.client("s3", region_name=region)
 
         with TemporaryDirectory() as tmpdir:
             # Download index

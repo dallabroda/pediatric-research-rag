@@ -24,7 +24,8 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 def get_s3_client():
     """Get boto3 S3 client."""
-    return boto3.client("s3", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("s3", region_name=region)
 
 
 def check_faiss_index(bucket: str) -> dict:
@@ -83,7 +84,8 @@ def check_bedrock() -> dict:
         Dict with status and model info
     """
     try:
-        bedrock = boto3.client("bedrock", region_name=AWS_REGION)
+        region = os.environ.get("AWS_REGION", "us-east-1")
+        bedrock = boto3.client("bedrock", region_name=region)
 
         # Check if model is available
         response = bedrock.get_foundation_model(modelIdentifier=LLM_MODEL_ID)

@@ -38,17 +38,20 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 def get_bedrock_client():
     """Get boto3 Bedrock Runtime client."""
-    return boto3.client("bedrock-runtime", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("bedrock-runtime", region_name=region)
 
 
 def get_s3_client():
     """Get boto3 S3 client."""
-    return boto3.client("s3", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("s3", region_name=region)
 
 
 def get_cloudwatch_client():
     """Get boto3 CloudWatch client."""
-    return boto3.client("cloudwatch", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("cloudwatch", region_name=region)
 
 
 def publish_metrics(

@@ -43,12 +43,14 @@ class QueryMetrics:
 
 def get_dynamodb_resource():
     """Get boto3 DynamoDB resource."""
-    return boto3.resource("dynamodb", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.resource("dynamodb", region_name=region)
 
 
 def get_cloudwatch_client():
     """Get boto3 CloudWatch client."""
-    return boto3.client("cloudwatch", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("cloudwatch", region_name=region)
 
 
 def log_query(metrics: QueryMetrics) -> bool:

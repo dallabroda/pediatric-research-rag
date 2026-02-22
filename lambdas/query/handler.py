@@ -75,7 +75,9 @@ def get_retriever() -> FAISSRetriever:
 
 def get_bedrock_client():
     """Get boto3 Bedrock Runtime client."""
-    return boto3.client("bedrock-runtime", region_name=AWS_REGION)
+    # Read region at runtime for Streamlit Cloud compatibility
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("bedrock-runtime", region_name=region)
 
 
 @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)

@@ -29,7 +29,8 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 def get_s3_client():
     """Get boto3 S3 client."""
-    return boto3.client("s3", region_name=AWS_REGION)
+    region = os.environ.get("AWS_REGION", "us-east-1")
+    return boto3.client("s3", region_name=region)
 
 
 def compute_document_hash(file_path: Path) -> str:
