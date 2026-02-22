@@ -48,7 +48,9 @@ def get_config(key: str, default: str = "") -> str:
 # Configuration - supports both env vars and Streamlit secrets
 S3_BUCKET = get_config("S3_BUCKET", "pediatric-research-rag")
 LOCAL_INDEX_DIR = get_config("LOCAL_INDEX_DIR", "data/index")
-LLM_MODEL_ID = get_config("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+# Use Amazon Nova Lite by default (no model access approval needed)
+# Set LLM_MODEL_ID to anthropic.claude-3-haiku-20240307-v1:0 if you have Claude access
+LLM_MODEL_ID = get_config("LLM_MODEL_ID", "amazon.nova-lite-v1:0")
 MAX_TOKENS = int(get_config("MAX_TOKENS", "1024"))
 
 # Ensure AWS credentials are loaded from secrets if present
@@ -154,13 +156,22 @@ def ask_question(question: str, top_k: int = 5) -> tuple[str, list[dict]]:
     # Build prompt
     user_prompt = build_user_prompt(question, context_chunks)
 
-    # Call Claude
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": MAX_TOKENS,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_prompt}],
-    })
+    # Build request body based on model type
+    if "anthropic" in LLM_MODEL_ID or "claude" in LLM_MODEL_ID:
+        # Claude/Anthropic format
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": MAX_TOKENS,
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": user_prompt}],
+        })
+    else:
+        # Amazon Nova format
+        body = json.dumps({
+            "system": [{"text": SYSTEM_PROMPT}],
+            "messages": [{"role": "user", "content": [{"text": user_prompt}]}],
+            "inferenceConfig": {"maxTokens": MAX_TOKENS},
+        })
 
     response = bedrock.invoke_model(
         modelId=LLM_MODEL_ID,
@@ -170,7 +181,13 @@ def ask_question(question: str, top_k: int = 5) -> tuple[str, list[dict]]:
     )
 
     response_body = json.loads(response["body"].read())
-    answer = response_body["content"][0]["text"]
+
+    # Parse response based on model type
+    if "anthropic" in LLM_MODEL_ID or "claude" in LLM_MODEL_ID:
+        answer = response_body["content"][0]["text"]
+    else:
+        # Amazon Nova format
+        answer = response_body["output"]["message"]["content"][0]["text"]
 
     # Format sources
     sources = [
