@@ -26,6 +26,7 @@ EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "amazon.titan-embed-te
 EMBEDDING_DIMENSION = 1024
 TOP_K = int(os.environ.get("TOP_K", "5"))
 SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.3"))
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
 @dataclass
@@ -71,7 +72,7 @@ class FAISSRetriever:
     def bedrock_client(self):
         """Lazy-load Bedrock client."""
         if self._bedrock_client is None:
-            self._bedrock_client = boto3.client("bedrock-runtime")
+            self._bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
         return self._bedrock_client
 
     @classmethod
@@ -119,7 +120,7 @@ class FAISSRetriever:
         if bucket is None:
             bucket = S3_BUCKET
 
-        s3 = boto3.client("s3")
+        s3 = boto3.client("s3", region_name=AWS_REGION)
 
         with TemporaryDirectory() as tmpdir:
             # Download index

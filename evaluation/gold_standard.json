@@ -1,0 +1,93 @@
+{
+  "version": "1.0",
+  "description": "Gold standard Q&A pairs for evaluating Pediatric Research RAG system",
+  "created": "2024-02-21",
+  "test_cases": [
+    {
+      "id": 1,
+      "question": "What is the 5-year survival rate for pediatric acute lymphoblastic leukemia (ALL)?",
+      "expected_answer_contains": ["survival", "ALL", "leukemia"],
+      "expected_sources_types": ["research_paper", "clinical_trial"],
+      "category": "survival_statistics",
+      "difficulty": "easy"
+    },
+    {
+      "id": 2,
+      "question": "What are the common late effects of childhood cancer treatment?",
+      "expected_answer_contains": ["late effects", "survivors", "treatment"],
+      "expected_sources_types": ["research_paper"],
+      "category": "late_effects",
+      "difficulty": "medium"
+    },
+    {
+      "id": 3,
+      "question": "What treatments are used for pediatric neuroblastoma?",
+      "expected_answer_contains": ["neuroblastoma", "treatment", "therapy"],
+      "expected_sources_types": ["research_paper", "clinical_trial"],
+      "category": "treatment_protocols",
+      "difficulty": "medium"
+    },
+    {
+      "id": 4,
+      "question": "What is the St. Jude approach to treating pediatric brain tumors?",
+      "expected_answer_contains": ["brain", "tumor", "St. Jude"],
+      "expected_sources_types": ["research_paper"],
+      "category": "treatment_protocols",
+      "difficulty": "hard"
+    },
+    {
+      "id": 5,
+      "question": "What clinical trials are available for relapsed leukemia at St. Jude?",
+      "expected_answer_contains": ["clinical trial", "relapsed", "leukemia"],
+      "expected_sources_types": ["clinical_trial"],
+      "category": "clinical_trials",
+      "difficulty": "medium"
+    },
+    {
+      "id": 6,
+      "question": "What are the eligibility criteria for pediatric cancer clinical trials?",
+      "expected_answer_contains": ["eligibility", "criteria", "trial"],
+      "expected_sources_types": ["clinical_trial"],
+      "category": "clinical_trials",
+      "difficulty": "easy"
+    },
+    {
+      "id": 7,
+      "question": "How does immunotherapy work for pediatric cancers?",
+      "expected_answer_contains": ["immunotherapy", "immune", "cancer"],
+      "expected_sources_types": ["research_paper"],
+      "category": "treatment_protocols",
+      "difficulty": "medium"
+    },
+    {
+      "id": 8,
+      "question": "What genetic factors are associated with childhood leukemia?",
+      "expected_answer_contains": ["genetic", "leukemia"],
+      "expected_sources_types": ["research_paper"],
+      "category": "genetics",
+      "difficulty": "hard"
+    },
+    {
+      "id": 9,
+      "question": "What supportive care is provided to pediatric cancer patients?",
+      "expected_answer_contains": ["supportive", "care", "patient"],
+      "expected_sources_types": ["research_paper"],
+      "category": "supportive_care",
+      "difficulty": "easy"
+    },
+    {
+      "id": 10,
+      "question": "What is CAR-T cell therapy and how is it used in pediatric cancer treatment?",
+      "expected_answer_contains": ["CAR-T", "cell", "therapy"],
+      "expected_sources_types": ["research_paper", "clinical_trial"],
+      "category": "treatment_protocols",
+      "difficulty": "hard"
+    }
+  ],
+  "evaluation_criteria": {
+    "retrieval_precision": "Did we retrieve chunks from relevant source types?",
+    "citation_accuracy": "Did we cite the actual source used in the answer?",
+    "answer_relevance": "Does the answer contain expected keywords?",
+    "confidence_calibration": "Does confidence score reflect actual answer quality?"
+  }
+}

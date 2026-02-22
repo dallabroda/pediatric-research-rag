@@ -135,6 +135,7 @@ INGEST_ARN=$(deploy_lambda "pediatric-rag-ingest" "lambdas.ingest.handler.handle
 EMBED_ARN=$(deploy_lambda "pediatric-rag-embed" "lambdas.embed.handler.handler" "Embedding generation" 600 2048)
 QUERY_ARN=$(deploy_lambda "pediatric-rag-query" "lambdas.query.handler.handler" "Query handling" 120 1024)
 DOCS_ARN=$(deploy_lambda "pediatric-rag-documents" "lambdas.documents.handler.handler" "Document listing" 60 512)
+HEALTH_ARN=$(deploy_lambda "pediatric-rag-health" "lambdas.health.handler.handler" "Health check" 30 256)
 
 # Configure S3 trigger for ingest function
 echo ""
@@ -224,6 +225,12 @@ echo "  Configured GET /documents"
 setup_api_method "$DOCS_ID_RESOURCE_ID" "GET" "$DOCS_ARN"
 echo "  Configured GET /documents/{id}"
 
+# GET /health -> health Lambda
+if [ -n "$HEALTH_RESOURCE_ID" ]; then
+    setup_api_method "$HEALTH_RESOURCE_ID" "GET" "$HEALTH_ARN"
+    echo "  Configured GET /health"
+fi
+
 # Deploy API
 echo ""
 echo "Deploying API..."
@@ -236,6 +243,21 @@ aws apigateway create-deployment \
 
 API_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/prod"
 
+# Configure API Gateway throttling (rate limiting for cost control)
+echo ""
+echo "Configuring API rate limiting..."
+
+aws apigateway update-stage \
+    --rest-api-id "$API_ID" \
+    --stage-name "prod" \
+    --patch-operations \
+        "op=replace,path=/throttling/burstLimit,value=10" \
+        "op=replace,path=/throttling/rateLimit,value=5" \
+    --region "$REGION" > /dev/null
+
+echo "  Set rate limit: 5 req/sec (burst: 10)"
+echo "  This prevents runaway API costs"
+
 echo ""
 echo "======================================"
 echo "Deployment Complete!"
@@ -246,11 +268,16 @@ echo "  - pediatric-rag-ingest (S3 trigger)"
 echo "  - pediatric-rag-embed"
 echo "  - pediatric-rag-query"
 echo "  - pediatric-rag-documents"
+echo "  - pediatric-rag-health"
 echo ""
 echo "API Endpoints:"
 echo "  POST $API_URL/query"
 echo "  GET  $API_URL/documents"
 echo "  GET  $API_URL/documents/{id}"
+echo "  GET  $API_URL/health"
+echo ""
+echo "Rate Limits:"
+echo "  5 requests/second (burst: 10)"
 echo ""
 echo "Test with:"
 echo "  curl -X POST $API_URL/query \\"

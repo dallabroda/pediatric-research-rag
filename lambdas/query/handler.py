@@ -35,6 +35,13 @@ from .prompts import (
     create_messages,
 )
 from .retriever import FAISSRetriever
+from .analytics import (
+    QueryMetrics,
+    QueryTimer,
+    generate_query_id,
+    log_query,
+    publish_query_metrics,
+)
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -44,6 +51,7 @@ S3_BUCKET = os.environ.get("S3_BUCKET", "pediatric-research-rag")
 LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1024"))
 TOP_K = int(os.environ.get("TOP_K", "5"))
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 # Cache for retriever (reuse across warm Lambda invocations)
 _retriever_cache = None
@@ -67,7 +75,7 @@ def get_retriever() -> FAISSRetriever:
 
 def get_bedrock_client():
     """Get boto3 Bedrock Runtime client."""
-    return boto3.client("bedrock-runtime")
+    return boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
 
 @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
@@ -248,6 +256,9 @@ def handler(event: dict, context: Any) -> dict:
     Returns:
         Response dict with status code and body
     """
+    query_id = generate_query_id()
+    timer = QueryTimer()
+
     try:
         # Parse request
         if event.get("body"):
@@ -272,7 +283,10 @@ def handler(event: dict, context: Any) -> dict:
                 "body": json.dumps({"error": "Question is required"}),
             }
 
-        logger.info(f"Processing question: {question[:100]}...")
+        logger.info(f"Processing query {query_id}: {question[:100]}...")
+
+        # Start timing the query
+        timer.__enter__()
 
         # Get retriever and search
         retriever = get_retriever()
@@ -383,6 +397,27 @@ def handler(event: dict, context: Any) -> dict:
                 "Try asking about clinical trial outcomes",
             ]
 
+        # Stop timer and add query_id to response
+        timer.__exit__(None, None, None)
+        response_body["query_id"] = query_id
+
+        # Log and publish metrics (async, non-blocking)
+        metrics = QueryMetrics(
+            query_id=query_id,
+            question=question,
+            chunks_retrieved=len(context_chunks),
+            chunk_ids=[r.chunk_id for r in confidence_results],
+            chunk_scores=[r.score for r in confidence_results],
+            confidence_level=confidence.level,
+            confidence_score=confidence.score,
+            response_length=len(answer),
+            latency_ms=timer.elapsed_ms,
+            model_id=LLM_MODEL_ID,
+            success=True,
+        )
+        log_query(metrics)
+        publish_query_metrics(metrics)
+
         return {
             "statusCode": 200,
             "headers": {
@@ -394,11 +429,33 @@ def handler(event: dict, context: Any) -> dict:
 
     except Exception as e:
         logger.exception("Error processing query")
+
+        # Log failed query metrics
+        try:
+            metrics = QueryMetrics(
+                query_id=query_id,
+                question=body.get("question", "") if "body" in dir() else "",
+                chunks_retrieved=0,
+                chunk_ids=[],
+                chunk_scores=[],
+                confidence_level="error",
+                confidence_score=0.0,
+                response_length=0,
+                latency_ms=timer.elapsed_ms if timer.end_time else 0,
+                model_id=LLM_MODEL_ID,
+                success=False,
+                error_message=str(e),
+            )
+            log_query(metrics)
+            publish_query_metrics(metrics)
+        except Exception:
+            pass  # Don't fail on metrics logging failure
+
         return {
             "statusCode": 500,
             "headers": {
                 "Content-Type": "application/json",
                 "Access-Control-Allow-Origin": "*",
             },
-            "body": json.dumps({"error": str(e)}),
+            "body": json.dumps({"error": str(e), "query_id": query_id}),
         }

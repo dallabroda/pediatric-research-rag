@@ -147,6 +147,56 @@ aws iam put-role-policy \
 
 echo "  Attached S3 and Bedrock policies"
 
+# DynamoDB table for query logging
+echo ""
+echo "Creating DynamoDB table for query logs..."
+
+QUERY_LOG_TABLE="${STACK_NAME}-query-logs"
+
+TABLE_EXISTS=$(aws dynamodb describe-table --table-name "$QUERY_LOG_TABLE" 2>/dev/null)
+
+if [ -z "$TABLE_EXISTS" ]; then
+    aws dynamodb create-table \
+        --table-name "$QUERY_LOG_TABLE" \
+        --attribute-definitions \
+            AttributeName=query_id,AttributeType=S \
+        --key-schema \
+            AttributeName=query_id,KeyType=HASH \
+        --billing-mode PAY_PER_REQUEST \
+        --region "$REGION" > /dev/null
+    echo "  Created table: $QUERY_LOG_TABLE"
+
+    # Wait for table to be active
+    aws dynamodb wait table-exists --table-name "$QUERY_LOG_TABLE" --region "$REGION"
+    echo "  Table is active"
+else
+    echo "  Table already exists: $QUERY_LOG_TABLE"
+fi
+
+# DynamoDB access policy
+DYNAMODB_POLICY='{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:PutItem",
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+                "dynamodb:Scan"
+            ],
+            "Resource": "arn:aws:dynamodb:'$REGION':'$ACCOUNT_ID':table/'$QUERY_LOG_TABLE'"
+        }
+    ]
+}'
+
+aws iam put-role-policy \
+    --role-name "$LAMBDA_ROLE_NAME" \
+    --policy-name "${STACK_NAME}-dynamodb-policy" \
+    --policy-document "$DYNAMODB_POLICY"
+
+echo "  Attached DynamoDB policy to Lambda role"
+
 # Wait for role to propagate
 echo "Waiting for IAM role to propagate..."
 sleep 10
@@ -394,6 +444,107 @@ EOF
 
 echo "  Updated deploy/config.env with DLQ and EventBridge config"
 
+# 7. Create Budget Alarm ($10)
+echo ""
+echo "Creating AWS Budget alarm ($10)..."
+
+BUDGET_NAME="${STACK_NAME}-budget"
+BUDGET_EXISTS=$(aws budgets describe-budgets --account-id "$ACCOUNT_ID" --query "Budgets[?BudgetName=='$BUDGET_NAME'].BudgetName" --output text 2>/dev/null || echo "")
+
+if [ -z "$BUDGET_EXISTS" ]; then
+    aws budgets create-budget \
+        --account-id "$ACCOUNT_ID" \
+        --budget '{
+            "BudgetName": "'$BUDGET_NAME'",
+            "BudgetLimit": {
+                "Amount": "10",
+                "Unit": "USD"
+            },
+            "TimeUnit": "MONTHLY",
+            "BudgetType": "COST"
+        }' \
+        --notifications-with-subscribers '[
+            {
+                "Notification": {
+                    "NotificationType": "ACTUAL",
+                    "ComparisonOperator": "GREATER_THAN",
+                    "Threshold": 80,
+                    "ThresholdType": "PERCENTAGE"
+                },
+                "Subscribers": [
+                    {
+                        "SubscriptionType": "SNS",
+                        "Address": "arn:aws:sns:'$REGION':'$ACCOUNT_ID':billing-alerts"
+                    }
+                ]
+            },
+            {
+                "Notification": {
+                    "NotificationType": "ACTUAL",
+                    "ComparisonOperator": "GREATER_THAN",
+                    "Threshold": 100,
+                    "ThresholdType": "PERCENTAGE"
+                },
+                "Subscribers": [
+                    {
+                        "SubscriptionType": "SNS",
+                        "Address": "arn:aws:sns:'$REGION':'$ACCOUNT_ID':billing-alerts"
+                    }
+                ]
+            }
+        ]' 2>/dev/null || echo "  Note: Budget creation may require SNS topic setup. Create manually in AWS Console if needed."
+    echo "  Created budget: $BUDGET_NAME (alerts at 80% and 100% of $10)"
+else
+    echo "  Budget already exists: $BUDGET_NAME"
+fi
+
+# 8. Create /health endpoint
+echo ""
+echo "Creating /health endpoint..."
+
+HEALTH_RESOURCE_ID=$(aws apigateway get-resources \
+    --rest-api-id "$API_ID" \
+    --query "items[?path=='/health'].id" --output text)
+
+if [ -z "$HEALTH_RESOURCE_ID" ]; then
+    HEALTH_RESOURCE_ID=$(aws apigateway create-resource \
+        --rest-api-id "$API_ID" \
+        --parent-id "$ROOT_RESOURCE_ID" \
+        --path-part "health" \
+        --query 'id' --output text)
+    echo "  Created /health resource"
+else
+    echo "  /health resource already exists"
+fi
+
+# Add to config.env
+cat >> deploy/config.env << EOF
+HEALTH_RESOURCE_ID=$HEALTH_RESOURCE_ID
+QUERY_LOG_TABLE=$QUERY_LOG_TABLE
+EOF
+
+# 9. Create CloudWatch Dashboard
+echo ""
+echo "Creating CloudWatch dashboard..."
+
+DASHBOARD_NAME="${STACK_NAME}-dashboard"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "$SCRIPT_DIR/dashboard.json" ]; then
+    # Substitute region in dashboard template
+    DASHBOARD_BODY=$(cat "$SCRIPT_DIR/dashboard.json" | sed "s/\${AWS_REGION}/$REGION/g")
+
+    aws cloudwatch put-dashboard \
+        --dashboard-name "$DASHBOARD_NAME" \
+        --dashboard-body "$DASHBOARD_BODY" \
+        --region "$REGION" > /dev/null
+
+    echo "  Created dashboard: $DASHBOARD_NAME"
+    echo "  View at: https://$REGION.console.aws.amazon.com/cloudwatch/home?region=$REGION#dashboards:name=$DASHBOARD_NAME"
+else
+    echo "  Warning: dashboard.json not found, skipping dashboard creation"
+fi
+
 echo ""
 echo "======================================"
 echo "Setup Complete!"
@@ -408,4 +559,7 @@ echo "Resources created:"
 echo "  - S3 Bucket: $BUCKET_NAME"
 echo "  - IAM Role: $LAMBDA_ROLE_NAME"
 echo "  - API Gateway: $API_NAME"
+echo "  - DynamoDB Table: $QUERY_LOG_TABLE"
+echo "  - CloudWatch Dashboard: $DASHBOARD_NAME"
+echo "  - Budget alarm: $BUDGET_NAME ($10/month)"
 echo ""

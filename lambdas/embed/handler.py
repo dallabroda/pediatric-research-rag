@@ -33,21 +33,22 @@ INDEX_PREFIX = os.environ.get("INDEX_PREFIX", "processed/index/")
 FAISS_INDEX_FILE = "faiss_index.bin"
 FAISS_METADATA_FILE = "faiss_metadata.json"
 METRICS_NAMESPACE = "PediatricRAG"
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
 def get_bedrock_client():
     """Get boto3 Bedrock Runtime client."""
-    return boto3.client("bedrock-runtime")
+    return boto3.client("bedrock-runtime", region_name=AWS_REGION)
 
 
 def get_s3_client():
     """Get boto3 S3 client."""
-    return boto3.client("s3")
+    return boto3.client("s3", region_name=AWS_REGION)
 
 
 def get_cloudwatch_client():
     """Get boto3 CloudWatch client."""
-    return boto3.client("cloudwatch")
+    return boto3.client("cloudwatch", region_name=AWS_REGION)
 
 
 def publish_metrics(

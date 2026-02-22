@@ -1,0 +1,156 @@
+{
+    "widgets": [
+        {
+            "type": "text",
+            "x": 0,
+            "y": 0,
+            "width": 24,
+            "height": 1,
+            "properties": {
+                "markdown": "# Pediatric Research RAG - Production Dashboard"
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 1,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Documents Processed (24h)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "DocumentsProcessed", {"stat": "Sum", "period": 3600}]
+                ],
+                "period": 300
+            }
+        },
+        {
+            "type": "metric",
+            "x": 8,
+            "y": 1,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Query Latency (P50/P95)",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "QueryLatency", {"stat": "p50", "period": 300, "label": "P50"}],
+                    ["PediatricRAG", "QueryLatency", {"stat": "p95", "period": 300, "label": "P95"}]
+                ],
+                "period": 300,
+                "yAxis": {
+                    "left": {
+                        "label": "Milliseconds"
+                    }
+                }
+            }
+        },
+        {
+            "type": "metric",
+            "x": 16,
+            "y": 1,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Query Success Rate",
+                "view": "singleValue",
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "QuerySuccess", {"stat": "Average", "period": 86400, "label": "Success Rate"}]
+                ],
+                "period": 86400
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 7,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Confidence Score Distribution",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "ConfidenceScore", {"stat": "Average", "period": 3600, "label": "Avg Confidence"}],
+                    ["PediatricRAG", "ConfidenceScore", {"stat": "Minimum", "period": 3600, "label": "Min"}],
+                    ["PediatricRAG", "ConfidenceScore", {"stat": "Maximum", "period": 3600, "label": "Max"}]
+                ],
+                "period": 300
+            }
+        },
+        {
+            "type": "metric",
+            "x": 8,
+            "y": 7,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Embedding Failures",
+                "view": "singleValue",
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "FailedDocuments", {"stat": "Sum", "period": 86400, "label": "Failed (24h)"}]
+                ],
+                "period": 86400
+            }
+        },
+        {
+            "type": "metric",
+            "x": 16,
+            "y": 7,
+            "width": 8,
+            "height": 6,
+            "properties": {
+                "title": "Index Stats",
+                "view": "singleValue",
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "ChunksCreated", {"stat": "Maximum", "period": 86400, "label": "Total Chunks"}],
+                    ["PediatricRAG", "DocumentsProcessed", {"stat": "Sum", "period": 86400, "label": "Docs (24h)"}]
+                ],
+                "period": 86400
+            }
+        },
+        {
+            "type": "metric",
+            "x": 0,
+            "y": 13,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "title": "Chunks Retrieved per Query",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "ChunksRetrieved", {"stat": "Average", "period": 300}]
+                ],
+                "period": 300
+            }
+        },
+        {
+            "type": "metric",
+            "x": 12,
+            "y": 13,
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "title": "Query Errors",
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS_REGION}",
+                "metrics": [
+                    ["PediatricRAG", "QueryErrors", {"stat": "Sum", "period": 300, "color": "#d62728"}]
+                ],
+                "period": 300
+            }
+        }
+    ]
+}

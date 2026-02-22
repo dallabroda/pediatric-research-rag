@@ -2,7 +2,9 @@
 Lambda handler for document ingestion.
 
 Triggered by S3 upload, parses and chunks documents, stores chunks for embedding.
+Includes hash-based deduplication to skip already-indexed documents.
 """
+import hashlib
 import json
 import logging
 import os
@@ -21,11 +23,65 @@ logger.setLevel(logging.INFO)
 # Configuration
 S3_BUCKET = os.environ.get("S3_BUCKET", "pediatric-research-rag")
 CHUNKS_PREFIX = os.environ.get("CHUNKS_PREFIX", "processed/chunks/")
+INDEX_PREFIX = os.environ.get("INDEX_PREFIX", "processed/index/")
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 
 def get_s3_client():
     """Get boto3 S3 client."""
-    return boto3.client("s3")
+    return boto3.client("s3", region_name=AWS_REGION)
+
+
+def compute_document_hash(file_path: Path) -> str:
+    """
+    Compute SHA-256 hash of document content.
+
+    Args:
+        file_path: Path to the document file
+
+    Returns:
+        Hex string of the SHA-256 hash
+    """
+    sha256 = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    return sha256.hexdigest()
+
+
+def check_duplicate(document_hash: str, bucket: str) -> tuple[bool, str | None]:
+    """
+    Check if document hash already exists in the index metadata.
+
+    Args:
+        document_hash: SHA-256 hash of the document
+        bucket: S3 bucket name
+
+    Returns:
+        Tuple of (is_duplicate, existing_document_id or None)
+    """
+    s3 = get_s3_client()
+
+    try:
+        # Load existing metadata
+        metadata_key = f"{INDEX_PREFIX}faiss_metadata.json"
+        response = s3.get_object(Bucket=bucket, Key=metadata_key)
+        metadata = json.loads(response["Body"].read())
+
+        # Check for matching hash
+        for chunk in metadata:
+            if chunk.get("document_hash") == document_hash:
+                return True, chunk.get("document_id")
+
+        return False, None
+
+    except s3.exceptions.NoSuchKey:
+        # No index yet, definitely not a duplicate
+        logger.info("No existing index found, document is new")
+        return False, None
+    except Exception as e:
+        logger.warning(f"Could not check for duplicates: {e}")
+        return False, None
 
 
 def download_from_s3(bucket: str, key: str, local_path: Path) -> None:
@@ -120,6 +176,20 @@ def handler(event: dict, context: Any) -> dict:
             try:
                 download_from_s3(bucket, key, tmp_path)
 
+                # Check for duplicate before processing
+                doc_hash = compute_document_hash(tmp_path)
+                is_dup, existing_doc_id = check_duplicate(doc_hash, bucket)
+
+                if is_dup:
+                    logger.info(f"Skipping duplicate document: {key} (matches {existing_doc_id})")
+                    results.append({
+                        "document_id": existing_doc_id,
+                        "status": "skipped",
+                        "reason": "duplicate",
+                        "hash": doc_hash[:16] + "...",
+                    })
+                    continue
+
                 # Also download metadata sidecar if it exists
                 metadata_key = key.rsplit(".", 1)[0] + "_metadata.json"
                 metadata_path = tmp_path.parent / f"{tmp_path.stem}_metadata.json"
@@ -158,6 +228,7 @@ def handler(event: dict, context: Any) -> dict:
                         "source_url": chunk.source_url,
                         "doc_title": chunk.doc_title,
                         "doc_type": chunk.doc_type,
+                        "document_hash": doc_hash,  # Store hash for deduplication
                     })
 
                 # Upload chunks to S3

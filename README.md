@@ -234,6 +234,7 @@ cd deploy
 | POST | `/query` | Ask a question, get a cited answer with confidence |
 | GET | `/documents` | List all ingested documents |
 | GET | `/documents/{id}` | Get document details + chunks |
+| GET | `/health` | System health check |
 | GET | `/lineage/{chunk_id}` | Get full provenance for a chunk |
 | GET | `/lineage?document_id={id}` | Get lineage for all chunks in a document |
 
@@ -257,8 +258,12 @@ cd deploy
 ### Infrastructure
 - EventBridge scheduled refresh (weekly by default)
 - SQS Dead Letter Queue for failed ingestions
-- CloudWatch metrics (DocumentsProcessed, ChunksCreated, AvgExtractionConfidence)
+- CloudWatch metrics and dashboard (query latency, confidence, errors)
+- DynamoDB query logging for analytics
+- API rate limiting (5 req/sec)
+- $10/month budget alarm
 - Exponential backoff retry logic for all API calls
+- Document deduplication via SHA256 hashing
 
 ---
 
@@ -318,6 +323,15 @@ pediatric-research-rag/
 ├── docs/                 # Cost projection, architecture
 └── tests/                # pytest + moto
 ```
+
+---
+
+## Documentation
+
+- **[Architecture Diagram](docs/architecture.md)** - System architecture with Mermaid diagrams
+- **[Cost Projection](docs/cost_projection_executive.md)** - Executive summary of costs
+- **[Detailed Cost Analysis](docs/cost_projection.md)** - Full cost breakdown
+- **[Evaluation Framework](docs/evaluation.md)** - RAG quality testing methodology
 
 ---
 
