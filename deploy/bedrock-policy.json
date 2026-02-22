@@ -1,0 +1,28 @@
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "bedrock:InvokeModel",
+                "bedrock:InvokeModelWithResponseStream"
+            ],
+            "Resource": [
+                "arn:aws:bedrock:us-east-1::foundation-model/amazon.titan-embed-text-v2:0",
+                "arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-lite-v1:0",
+                "arn:aws:bedrock:us-east-1::foundation-model/anthropic.*"
+            ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "s3:GetObject",
+                "s3:ListBucket"
+            ],
+            "Resource": [
+                "arn:aws:s3:::pediatric-research-rag",
+                "arn:aws:s3:::pediatric-research-rag/*"
+            ]
+        }
+    ]
+}

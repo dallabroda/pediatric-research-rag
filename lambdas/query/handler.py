@@ -80,6 +80,11 @@ def get_bedrock_client():
     return boto3.client("bedrock-runtime", region_name=region)
 
 
+def _is_claude_model(model_id: str) -> bool:
+    """Check if model is Claude/Anthropic."""
+    return "anthropic" in model_id.lower() or "claude" in model_id.lower()
+
+
 @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
 def generate_answer(
     question: str,
@@ -88,7 +93,7 @@ def generate_answer(
     system_prompt: str = None,
 ) -> str:
     """
-    Generate an answer using Claude.
+    Generate an answer using Claude or Amazon Nova.
 
     Args:
         question: User's question
@@ -104,14 +109,25 @@ def generate_answer(
 
     # Build messages
     messages = create_messages(question, context_chunks)
+    effective_system_prompt = system_prompt or SYSTEM_PROMPT
 
-    # Call Claude via Bedrock
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": MAX_TOKENS,
-        "system": system_prompt or SYSTEM_PROMPT,
-        "messages": messages,
-    })
+    # Build request body based on model type
+    if _is_claude_model(LLM_MODEL_ID):
+        # Claude/Anthropic format
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": MAX_TOKENS,
+            "system": effective_system_prompt,
+            "messages": messages,
+        })
+    else:
+        # Amazon Nova format
+        user_content = messages[0]["content"] if messages else ""
+        body = json.dumps({
+            "system": [{"text": effective_system_prompt}],
+            "messages": [{"role": "user", "content": [{"text": user_content}]}],
+            "inferenceConfig": {"maxTokens": MAX_TOKENS},
+        })
 
     response = bedrock_client.invoke_model(
         modelId=LLM_MODEL_ID,
@@ -121,9 +137,50 @@ def generate_answer(
     )
 
     response_body = json.loads(response["body"].read())
-    answer = response_body["content"][0]["text"]
+
+    # Parse response based on model type
+    if _is_claude_model(LLM_MODEL_ID):
+        answer = response_body["content"][0]["text"]
+    else:
+        # Amazon Nova format
+        answer = response_body["output"]["message"]["content"][0]["text"]
 
     return answer
+
+
+def _invoke_llm(
+    user_content: str,
+    system_prompt: str,
+    bedrock_client,
+) -> str:
+    """Helper to invoke LLM with correct format for model type."""
+    if _is_claude_model(LLM_MODEL_ID):
+        body = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": MAX_TOKENS,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_content}],
+        })
+    else:
+        body = json.dumps({
+            "system": [{"text": system_prompt}],
+            "messages": [{"role": "user", "content": [{"text": user_content}]}],
+            "inferenceConfig": {"maxTokens": MAX_TOKENS},
+        })
+
+    response = bedrock_client.invoke_model(
+        modelId=LLM_MODEL_ID,
+        body=body,
+        contentType="application/json",
+        accept="application/json",
+    )
+
+    response_body = json.loads(response["body"].read())
+
+    if _is_claude_model(LLM_MODEL_ID):
+        return response_body["content"][0]["text"]
+    else:
+        return response_body["output"]["message"]["content"][0]["text"]
 
 
 @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
@@ -146,24 +203,7 @@ def generate_synthesis_answer(
     if bedrock_client is None:
         bedrock_client = get_bedrock_client()
 
-    messages = [{"role": "user", "content": prompt}]
-
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": MAX_TOKENS,
-        "system": CROSS_DOCUMENT_SYSTEM_PROMPT,
-        "messages": messages,
-    })
-
-    response = bedrock_client.invoke_model(
-        modelId=LLM_MODEL_ID,
-        body=body,
-        contentType="application/json",
-        accept="application/json",
-    )
-
-    response_body = json.loads(response["body"].read())
-    return response_body["content"][0]["text"]
+    return _invoke_llm(prompt, CROSS_DOCUMENT_SYSTEM_PROMPT, bedrock_client)
 
 
 @retry_with_backoff(max_retries=3, base_delay=1.0, max_delay=30.0)
@@ -186,24 +226,7 @@ def generate_low_confidence_answer(
     if bedrock_client is None:
         bedrock_client = get_bedrock_client()
 
-    messages = [{"role": "user", "content": prompt}]
-
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": MAX_TOKENS,
-        "system": LOW_CONFIDENCE_SYSTEM_PROMPT,
-        "messages": messages,
-    })
-
-    response = bedrock_client.invoke_model(
-        modelId=LLM_MODEL_ID,
-        body=body,
-        contentType="application/json",
-        accept="application/json",
-    )
-
-    response_body = json.loads(response["body"].read())
-    return response_body["content"][0]["text"]
+    return _invoke_llm(prompt, LOW_CONFIDENCE_SYSTEM_PROMPT, bedrock_client)
 
 
 def build_graceful_degradation_response(

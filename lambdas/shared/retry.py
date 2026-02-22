@@ -10,18 +10,23 @@ import random
 import time
 from typing import Any, Callable, Optional, Type
 
-import requests
 from botocore.exceptions import ClientError
+
+# Optional requests import for Lambda compatibility
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    requests = None  # type: ignore
+    HAS_REQUESTS = False
 
 logger = logging.getLogger(__name__)
 
 # Default retryable exceptions
-RETRYABLE_EXCEPTIONS: tuple[Type[Exception], ...] = (
-    ConnectionError,
-    TimeoutError,
-    requests.exceptions.Timeout,
-    requests.exceptions.ConnectionError,
-)
+_base_exceptions: list[Type[Exception]] = [ConnectionError, TimeoutError]
+if HAS_REQUESTS and requests is not None:
+    _base_exceptions.extend([requests.exceptions.Timeout, requests.exceptions.ConnectionError])
+RETRYABLE_EXCEPTIONS: tuple[Type[Exception], ...] = tuple(_base_exceptions)
 
 
 def is_throttling_error(exception: Exception) -> bool:
@@ -50,10 +55,11 @@ def is_throttling_error(exception: Exception) -> bool:
         return True
 
     # Check HTTP status codes for requests exceptions
-    if isinstance(exception, requests.exceptions.HTTPError):
-        response = getattr(exception, "response", None)
-        if response is not None:
-            return response.status_code in (429, 503, 502)
+    if HAS_REQUESTS and requests is not None:
+        if isinstance(exception, requests.exceptions.HTTPError):
+            response = getattr(exception, "response", None)
+            if response is not None:
+                return response.status_code in (429, 503, 502)
 
     return False
 
@@ -163,80 +169,83 @@ def retry_with_backoff(
     return decorator
 
 
-class RetryableAPIClient:
-    """
-    Base class for API clients with built-in retry logic.
-
-    Provides a request method that automatically retries on failures.
-    """
-
-    def __init__(
-        self,
-        max_retries: int = 3,
-        base_delay: float = 1.0,
-        max_delay: float = 60.0,
-        timeout: int = 30,
-    ):
+# Only define RetryableAPIClient if requests is available
+if HAS_REQUESTS and requests is not None:
+    class RetryableAPIClient:
         """
-        Initialize the retryable client.
+        Base class for API clients with built-in retry logic.
 
-        Args:
-            max_retries: Maximum retry attempts
-            base_delay: Initial backoff delay in seconds
-            max_delay: Maximum backoff delay in seconds
-            timeout: Request timeout in seconds
+        Provides a request method that automatically retries on failures.
+        Requires the requests library to be installed.
         """
-        self.max_retries = max_retries
-        self.base_delay = base_delay
-        self.max_delay = max_delay
-        self.timeout = timeout
-        self._session: Optional[requests.Session] = None
 
-    @property
-    def session(self) -> requests.Session:
-        """Lazy-load requests session."""
-        if self._session is None:
-            self._session = requests.Session()
-        return self._session
+        def __init__(
+            self,
+            max_retries: int = 3,
+            base_delay: float = 1.0,
+            max_delay: float = 60.0,
+            timeout: int = 30,
+        ):
+            """
+            Initialize the retryable client.
 
-    def request(
-        self,
-        method: str,
-        url: str,
-        **kwargs: Any,
-    ) -> requests.Response:
-        """
-        Make an HTTP request with automatic retry.
+            Args:
+                max_retries: Maximum retry attempts
+                base_delay: Initial backoff delay in seconds
+                max_delay: Maximum backoff delay in seconds
+                timeout: Request timeout in seconds
+            """
+            self.max_retries = max_retries
+            self.base_delay = base_delay
+            self.max_delay = max_delay
+            self.timeout = timeout
+            self._session: Optional[requests.Session] = None
 
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            url: Request URL
-            **kwargs: Additional arguments passed to requests
+        @property
+        def session(self) -> requests.Session:
+            """Lazy-load requests session."""
+            if self._session is None:
+                self._session = requests.Session()
+            return self._session
 
-        Returns:
-            Response object
+        def request(
+            self,
+            method: str,
+            url: str,
+            **kwargs: Any,
+        ) -> requests.Response:
+            """
+            Make an HTTP request with automatic retry.
 
-        Raises:
-            requests.exceptions.RequestException: After all retries exhausted
-        """
-        kwargs.setdefault("timeout", self.timeout)
+            Args:
+                method: HTTP method (GET, POST, etc.)
+                url: Request URL
+                **kwargs: Additional arguments passed to requests
 
-        @retry_with_backoff(
-            max_retries=self.max_retries,
-            base_delay=self.base_delay,
-            max_delay=self.max_delay,
-        )
-        def _make_request() -> requests.Response:
-            response = self.session.request(method, url, **kwargs)
-            response.raise_for_status()
-            return response
+            Returns:
+                Response object
 
-        return _make_request()
+            Raises:
+                requests.exceptions.RequestException: After all retries exhausted
+            """
+            kwargs.setdefault("timeout", self.timeout)
 
-    def get(self, url: str, **kwargs: Any) -> requests.Response:
-        """Make a GET request with retry."""
-        return self.request("GET", url, **kwargs)
+            @retry_with_backoff(
+                max_retries=self.max_retries,
+                base_delay=self.base_delay,
+                max_delay=self.max_delay,
+            )
+            def _make_request() -> requests.Response:
+                response = self.session.request(method, url, **kwargs)
+                response.raise_for_status()
+                return response
 
-    def post(self, url: str, **kwargs: Any) -> requests.Response:
-        """Make a POST request with retry."""
-        return self.request("POST", url, **kwargs)
+            return _make_request()
+
+        def get(self, url: str, **kwargs: Any) -> requests.Response:
+            """Make a GET request with retry."""
+            return self.request("GET", url, **kwargs)
+
+        def post(self, url: str, **kwargs: Any) -> requests.Response:
+            """Make a POST request with retry."""
+            return self.request("POST", url, **kwargs)
