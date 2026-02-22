@@ -17,6 +17,7 @@ build/
 .idea/
 *.swp
 *.swo
+.claude/
 
 # AWS
 .aws/
@@ -36,6 +37,9 @@ lambdas/*/*.zip
 deploy/package/
 deploy/*.zip
 deploy/layer.zip
+deploy/layer_build/
+deploy/pkg/
+deploy/config.env
 
 # Local FAISS index
 faiss_index/
@@ -52,3 +56,6 @@ nul
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Test outputs
+response.json
