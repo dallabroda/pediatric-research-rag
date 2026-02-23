@@ -54,7 +54,7 @@ def get_config(key: str, default: str = "") -> str:
 # Configuration - supports both env vars and Streamlit secrets
 S3_BUCKET = get_config("S3_BUCKET", "pediatric-research-rag")
 LOCAL_INDEX_DIR = get_config("LOCAL_INDEX_DIR", "data/index")
-LLM_MODEL_ID = get_config("LLM_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0")
+LLM_MODEL_ID = get_config("LLM_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
 MAX_TOKENS = int(get_config("MAX_TOKENS", "1024"))
 
 # Ensure AWS credentials are loaded from secrets if present
