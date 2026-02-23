@@ -4,10 +4,14 @@ Download open-access research papers from PubMed Central (PMC).
 
 Uses NCBI E-utilities API and PMC Open Access Web Service.
 Rate limit: 3 requests/second without API key.
+
+Supports direct upload to S3 with --upload-to-s3 flag.
 """
 import argparse
+import io
 import json
 import logging
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -15,7 +19,9 @@ from pathlib import Path
 from typing import Optional
 from xml.etree import ElementTree
 
+import boto3
 import requests
+from tqdm import tqdm
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -32,6 +38,118 @@ PMC_OA_URL = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi"
 
 # Rate limiting
 REQUEST_DELAY = 0.34  # ~3 requests per second
+
+
+def get_s3_client():
+    """Get boto3 S3 client."""
+    return boto3.client(
+        "s3",
+        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    )
+
+
+def get_existing_pmc_ids(s3_bucket: str, prefix: str = "raw/papers/") -> set[str]:
+    """
+    List PMC IDs already present in S3 bucket.
+
+    Args:
+        s3_bucket: S3 bucket name
+        prefix: S3 key prefix for papers
+
+    Returns:
+        Set of PMC IDs (e.g., {"PMC1234567", "PMC7654321"})
+    """
+    s3 = get_s3_client()
+    pmc_ids = set()
+
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            # Extract PMC ID from filename like "raw/papers/PMC1234567.pdf"
+            filename = key.split("/")[-1]
+            if filename.endswith(".pdf"):
+                pmc_id = filename.replace(".pdf", "")
+                pmc_ids.add(pmc_id)
+
+    return pmc_ids
+
+
+@retry_with_backoff(max_retries=3, base_delay=2.0, max_delay=30.0)
+def download_pdf_to_memory(url: str) -> Optional[bytes]:
+    """
+    Download PDF to memory (bytes) instead of disk.
+
+    Args:
+        url: URL to download from
+
+    Returns:
+        PDF bytes if successful, None otherwise
+    """
+    time.sleep(REQUEST_DELAY)
+
+    # Handle FTP URLs by converting to HTTPS
+    if url.startswith("ftp://"):
+        url = url.replace("ftp://ftp.ncbi.nlm.nih.gov", "https://ftp.ncbi.nlm.nih.gov")
+
+    response = requests.get(url, timeout=120, stream=True)
+    response.raise_for_status()
+
+    # Read into memory
+    content = io.BytesIO()
+    for chunk in response.iter_content(chunk_size=8192):
+        content.write(chunk)
+
+    return content.getvalue()
+
+
+def upload_paper_to_s3(
+    pmc_id: str,
+    pdf_bytes: Optional[bytes],
+    metadata: dict,
+    s3_bucket: str,
+    prefix: str = "raw/papers/",
+) -> bool:
+    """
+    Upload PDF and metadata to S3.
+
+    Args:
+        pmc_id: PMC ID (e.g., "PMC1234567")
+        pdf_bytes: PDF content as bytes, or None if no PDF
+        metadata: Paper metadata dictionary
+        s3_bucket: S3 bucket name
+        prefix: S3 key prefix
+
+    Returns:
+        True if successful, False otherwise
+    """
+    s3 = get_s3_client()
+
+    try:
+        # Upload PDF if available
+        if pdf_bytes:
+            pdf_key = f"{prefix}{pmc_id}.pdf"
+            s3.put_object(
+                Bucket=s3_bucket,
+                Key=pdf_key,
+                Body=pdf_bytes,
+                ContentType="application/pdf",
+            )
+
+        # Upload metadata
+        metadata_key = f"{prefix}{pmc_id}_metadata.json"
+        s3.put_object(
+            Bucket=s3_bucket,
+            Key=metadata_key,
+            Body=json.dumps(metadata, indent=2, ensure_ascii=False),
+            ContentType="application/json",
+        )
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to upload {pmc_id} to S3: {e}")
+        return False
 
 
 @dataclass
@@ -335,6 +453,114 @@ def download_papers(
     return papers
 
 
+def download_papers_to_s3(
+    query: str,
+    count: int,
+    s3_bucket: str,
+    skip_existing: bool = True,
+) -> dict:
+    """
+    Download papers from PMC and upload directly to S3.
+
+    Args:
+        query: Search query for PMC
+        count: Number of papers to download
+        s3_bucket: S3 bucket name
+        skip_existing: Skip papers already in S3
+
+    Returns:
+        Dict with download statistics
+    """
+    # Get existing PMC IDs if skip_existing
+    existing_ids = set()
+    if skip_existing:
+        logger.info(f"Checking existing papers in s3://{s3_bucket}/raw/papers/...")
+        existing_ids = get_existing_pmc_ids(s3_bucket)
+        logger.info(f"Found {len(existing_ids)} existing papers in S3")
+
+    # Search for more articles than needed (some may fail or already exist)
+    search_count = count * 3 if skip_existing else count * 2
+    pmc_ids = search_pmc(query, max_results=search_count)
+
+    # Filter out existing
+    if skip_existing:
+        new_pmc_ids = [pid for pid in pmc_ids if pid not in existing_ids]
+        logger.info(f"After filtering existing: {len(new_pmc_ids)} new papers to process")
+    else:
+        new_pmc_ids = pmc_ids
+
+    stats = {
+        "searched": len(pmc_ids),
+        "skipped_existing": len(pmc_ids) - len(new_pmc_ids),
+        "downloaded": 0,
+        "failed": 0,
+        "no_pdf": 0,
+    }
+
+    # Process papers with progress bar
+    downloaded = 0
+    with tqdm(total=count, desc="Downloading papers", unit="paper") as pbar:
+        for pmc_id in new_pmc_ids:
+            if downloaded >= count:
+                break
+
+            # Get metadata
+            try:
+                metadata = get_article_metadata(pmc_id)
+                if not metadata.get("title"):
+                    logger.warning(f"No metadata found for {pmc_id}, skipping")
+                    stats["failed"] += 1
+                    continue
+            except Exception as e:
+                logger.error(f"Failed to get metadata for {pmc_id}: {e}")
+                stats["failed"] += 1
+                continue
+
+            # Get PDF URL
+            try:
+                pdf_url = get_pdf_url(pmc_id)
+            except Exception as e:
+                logger.error(f"Failed to get PDF URL for {pmc_id}: {e}")
+                pdf_url = None
+
+            pdf_bytes = None
+            if pdf_url:
+                try:
+                    pdf_bytes = download_pdf_to_memory(pdf_url)
+                except Exception as e:
+                    logger.error(f"Failed to download PDF for {pmc_id}: {e}")
+                    stats["failed"] += 1
+                    continue
+            else:
+                stats["no_pdf"] += 1
+                continue  # Skip papers without PDFs
+
+            # Create full metadata
+            paper_metadata = {
+                "pmc_id": metadata["pmc_id"],
+                "pmid": metadata.get("pmid"),
+                "title": metadata["title"],
+                "authors": metadata.get("authors", []),
+                "journal": metadata.get("journal", ""),
+                "pub_date": metadata.get("pub_date", ""),
+                "abstract": metadata.get("abstract", ""),
+                "pdf_path": f"s3://{s3_bucket}/raw/papers/{pmc_id}.pdf" if pdf_bytes else None,
+                "source_url": f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/",
+            }
+
+            # Upload to S3
+            if upload_paper_to_s3(pmc_id, pdf_bytes, paper_metadata, s3_bucket):
+                downloaded += 1
+                stats["downloaded"] += 1
+                pbar.update(1)
+                pbar.set_postfix({"last": pmc_id})
+            else:
+                stats["failed"] += 1
+
+    logger.info(f"Download complete: {stats}")
+    return stats
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download open-access papers from PubMed Central"
@@ -355,23 +581,68 @@ def main():
         "--output-dir",
         type=str,
         default="data/sample/papers",
-        help="Output directory for papers",
+        help="Output directory for papers (local mode only)",
+    )
+    parser.add_argument(
+        "--upload-to-s3",
+        action="store_true",
+        help="Upload directly to S3 instead of local storage",
+    )
+    parser.add_argument(
+        "--s3-bucket",
+        type=str,
+        default=None,
+        help="S3 bucket name (default: S3_BUCKET env var or 'pediatric-research-rag')",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip papers already in S3 (default: True)",
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        action="store_false",
+        dest="skip_existing",
+        help="Re-download papers even if they exist in S3",
     )
 
     args = parser.parse_args()
 
-    papers = download_papers(
-        query=args.query,
-        count=args.count,
-        output_dir=args.output_dir,
-    )
+    if args.upload_to_s3:
+        # S3 mode
+        s3_bucket = args.s3_bucket or os.environ.get("S3_BUCKET", "pediatric-research-rag")
+        print(f"\nDownloading papers to s3://{s3_bucket}/raw/papers/")
+        print(f"Skip existing: {args.skip_existing}\n")
 
-    print(f"\nDownloaded {len([p for p in papers if p.pdf_path])} PDFs")
-    print(f"Total papers processed: {len(papers)}")
+        stats = download_papers_to_s3(
+            query=args.query,
+            count=args.count,
+            s3_bucket=s3_bucket,
+            skip_existing=args.skip_existing,
+        )
 
-    for paper in papers:
-        status = "PDF" if paper.pdf_path else "metadata only"
-        print(f"  - {paper.pmc_id}: {paper.title[:60]}... ({status})")
+        print(f"\nDownload Summary:")
+        print(f"  Searched: {stats['searched']}")
+        print(f"  Skipped (already in S3): {stats['skipped_existing']}")
+        print(f"  Downloaded: {stats['downloaded']}")
+        print(f"  No PDF available: {stats['no_pdf']}")
+        print(f"  Failed: {stats['failed']}")
+
+    else:
+        # Local mode (original behavior)
+        papers = download_papers(
+            query=args.query,
+            count=args.count,
+            output_dir=args.output_dir,
+        )
+
+        print(f"\nDownloaded {len([p for p in papers if p.pdf_path])} PDFs")
+        print(f"Total papers processed: {len(papers)}")
+
+        for paper in papers:
+            status = "PDF" if paper.pdf_path else "metadata only"
+            print(f"  - {paper.pmc_id}: {paper.title[:60]}... ({status})")
 
 
 if __name__ == "__main__":

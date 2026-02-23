@@ -3,17 +3,22 @@
 Download clinical trial data from ClinicalTrials.gov API v2.
 
 Fetches trials sponsored by St. Jude Children's Research Hospital.
+
+Supports direct upload to S3 with --upload-to-s3 flag.
 """
 import argparse
 import json
 import logging
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
 
+import boto3
 import requests
+from tqdm import tqdm
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -28,6 +33,88 @@ CT_API_URL = "https://clinicaltrials.gov/api/v2/studies"
 
 # Rate limiting
 REQUEST_DELAY = 0.5
+
+
+def get_s3_client():
+    """Get boto3 S3 client."""
+    return boto3.client(
+        "s3",
+        region_name=os.environ.get("AWS_REGION", "us-east-1"),
+    )
+
+
+def get_existing_nct_ids(s3_bucket: str, prefix: str = "raw/trials/") -> set[str]:
+    """
+    List NCT IDs already present in S3 bucket.
+
+    Args:
+        s3_bucket: S3 bucket name
+        prefix: S3 key prefix for trials
+
+    Returns:
+        Set of NCT IDs (e.g., {"NCT01234567", "NCT07654321"})
+    """
+    s3 = get_s3_client()
+    nct_ids = set()
+
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=s3_bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            key = obj["Key"]
+            # Extract NCT ID from filename like "raw/trials/NCT01234567.json"
+            filename = key.split("/")[-1]
+            if filename.endswith(".json") and not filename.endswith("_text.txt"):
+                nct_id = filename.replace(".json", "")
+                if nct_id.startswith("NCT"):
+                    nct_ids.add(nct_id)
+
+    return nct_ids
+
+
+def upload_trial_to_s3(
+    trial: "TrialMetadata",
+    text_content: str,
+    s3_bucket: str,
+    prefix: str = "raw/trials/",
+) -> bool:
+    """
+    Upload trial JSON and text to S3.
+
+    Args:
+        trial: TrialMetadata object
+        text_content: Text representation for RAG
+        s3_bucket: S3 bucket name
+        prefix: S3 key prefix
+
+    Returns:
+        True if successful, False otherwise
+    """
+    s3 = get_s3_client()
+
+    try:
+        # Upload JSON metadata
+        json_key = f"{prefix}{trial.nct_id}.json"
+        s3.put_object(
+            Bucket=s3_bucket,
+            Key=json_key,
+            Body=json.dumps(asdict(trial), indent=2, ensure_ascii=False),
+            ContentType="application/json",
+        )
+
+        # Upload text for RAG
+        text_key = f"{prefix}{trial.nct_id}_text.txt"
+        s3.put_object(
+            Bucket=s3_bucket,
+            Key=text_key,
+            Body=text_content.encode("utf-8"),
+            ContentType="text/plain; charset=utf-8",
+        )
+
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to upload {trial.nct_id} to S3: {e}")
+        return False
 
 
 @dataclass
@@ -338,6 +425,79 @@ def download_trials(
     return trials
 
 
+def download_trials_to_s3(
+    sponsor: str,
+    count: int,
+    s3_bucket: str,
+    skip_existing: bool = True,
+) -> dict:
+    """
+    Download trials from ClinicalTrials.gov and upload directly to S3.
+
+    Args:
+        sponsor: Sponsor organization to search for
+        count: Number of trials to download
+        s3_bucket: S3 bucket name
+        skip_existing: Skip trials already in S3
+
+    Returns:
+        Dict with download statistics
+    """
+    # Get existing NCT IDs if skip_existing
+    existing_ids = set()
+    if skip_existing:
+        logger.info(f"Checking existing trials in s3://{s3_bucket}/raw/trials/...")
+        existing_ids = get_existing_nct_ids(s3_bucket)
+        logger.info(f"Found {len(existing_ids)} existing trials in S3")
+
+    # Search for more trials than needed (some may already exist)
+    search_count = count * 2 if skip_existing else count
+    raw_studies = search_trials(sponsor, max_results=search_count)
+
+    stats = {
+        "searched": len(raw_studies),
+        "skipped_existing": 0,
+        "downloaded": 0,
+        "failed": 0,
+    }
+
+    # Process trials with progress bar
+    with tqdm(total=count, desc="Downloading trials", unit="trial") as pbar:
+        for raw_study in raw_studies:
+            if stats["downloaded"] >= count:
+                break
+
+            try:
+                trial = parse_study(raw_study)
+                if not trial.nct_id:
+                    stats["failed"] += 1
+                    continue
+
+                # Skip if already exists
+                if skip_existing and trial.nct_id in existing_ids:
+                    stats["skipped_existing"] += 1
+                    continue
+
+                # Generate text for RAG
+                text_content = extract_text_for_rag(trial)
+
+                # Upload to S3
+                if upload_trial_to_s3(trial, text_content, s3_bucket):
+                    stats["downloaded"] += 1
+                    pbar.update(1)
+                    pbar.set_postfix({"last": trial.nct_id})
+                else:
+                    stats["failed"] += 1
+
+            except Exception as e:
+                logger.error(f"Failed to process trial: {e}")
+                stats["failed"] += 1
+                continue
+
+    logger.info(f"Download complete: {stats}")
+    return stats
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download clinical trials from ClinicalTrials.gov"
@@ -358,20 +518,64 @@ def main():
         "--output-dir",
         type=str,
         default="data/sample/trials",
-        help="Output directory for trial data",
+        help="Output directory for trial data (local mode only)",
+    )
+    parser.add_argument(
+        "--upload-to-s3",
+        action="store_true",
+        help="Upload directly to S3 instead of local storage",
+    )
+    parser.add_argument(
+        "--s3-bucket",
+        type=str,
+        default=None,
+        help="S3 bucket name (default: S3_BUCKET env var or 'pediatric-research-rag')",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        default=True,
+        help="Skip trials already in S3 (default: True)",
+    )
+    parser.add_argument(
+        "--no-skip-existing",
+        action="store_false",
+        dest="skip_existing",
+        help="Re-download trials even if they exist in S3",
     )
 
     args = parser.parse_args()
 
-    trials = download_trials(
-        sponsor=args.sponsor,
-        count=args.count,
-        output_dir=args.output_dir,
-    )
+    if args.upload_to_s3:
+        # S3 mode
+        s3_bucket = args.s3_bucket or os.environ.get("S3_BUCKET", "pediatric-research-rag")
+        print(f"\nDownloading trials to s3://{s3_bucket}/raw/trials/")
+        print(f"Skip existing: {args.skip_existing}\n")
 
-    print(f"\nDownloaded {len(trials)} trials")
-    for trial in trials:
-        print(f"  - {trial.nct_id}: {trial.title[:60]}... ({trial.status})")
+        stats = download_trials_to_s3(
+            sponsor=args.sponsor,
+            count=args.count,
+            s3_bucket=s3_bucket,
+            skip_existing=args.skip_existing,
+        )
+
+        print(f"\nDownload Summary:")
+        print(f"  Searched: {stats['searched']}")
+        print(f"  Skipped (already in S3): {stats['skipped_existing']}")
+        print(f"  Downloaded: {stats['downloaded']}")
+        print(f"  Failed: {stats['failed']}")
+
+    else:
+        # Local mode (original behavior)
+        trials = download_trials(
+            sponsor=args.sponsor,
+            count=args.count,
+            output_dir=args.output_dir,
+        )
+
+        print(f"\nDownloaded {len(trials)} trials")
+        for trial in trials:
+            print(f"  - {trial.nct_id}: {trial.title[:60]}... ({trial.status})")
 
 
 if __name__ == "__main__":

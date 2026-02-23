@@ -25,3 +25,4 @@ responses>=0.25.0
 
 # Utils
 python-dotenv>=1.0.0
+tqdm>=4.66.0
