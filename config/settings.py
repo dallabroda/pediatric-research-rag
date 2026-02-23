@@ -18,11 +18,11 @@ S3_INDEX_PREFIX = "processed/index/"
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
 EMBEDDING_DIMENSION = 1024  # Titan V2 output dimension
 
-# LLM — Use Haiku for development (12x cheaper), Sonnet for demo/production
-# Haiku:  ~$0.25/$1.25 per 1M input/output tokens
-# Sonnet: ~$3.00/$15.00 per 1M input/output tokens
-LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
-LLM_MODEL_ID_DEMO = "anthropic.claude-3-sonnet-20240229-v1:0"  # switch for demo
+# LLM — Claude 3.5 Sonnet for production (best quality/cost balance)
+# Haiku 3.5:  ~$1/$5 per 1M input/output tokens
+# Sonnet 3.5: ~$3/$15 per 1M input/output tokens
+LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+LLM_MODEL_ID_CHEAP = "anthropic.claude-3-5-haiku-20241022-v1:0"  # cheaper alternative
 
 # Chunking
 CHUNK_SIZE = int(os.getenv("CHUNK_SIZE", "500"))         # tokens per chunk

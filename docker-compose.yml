@@ -11,7 +11,7 @@ services:
     environment:
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - S3_BUCKET=${S3_BUCKET:-pediatric-research-rag}
-      - LLM_MODEL_ID=${LLM_MODEL_ID:-anthropic.claude-3-haiku-20240307-v1:0}
+      - LLM_MODEL_ID=${LLM_MODEL_ID:-anthropic.claude-3-5-sonnet-20241022-v2:0}
       - EMBEDDING_MODEL_ID=${EMBEDDING_MODEL_ID:-amazon.titan-embed-text-v2:0}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}

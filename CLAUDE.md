@@ -7,7 +7,7 @@ A serverless RAG (Retrieval-Augmented Generation) system on AWS that enables nat
 - **Language:** Python 3.12
 - **AWS Services:** Lambda, S3, API Gateway, Bedrock
 - **Embeddings:** AWS Bedrock — Titan Embeddings V2 (`amazon.titan-embed-text-v2:0`, 1024 dimensions)
-- **LLM:** AWS Bedrock — Claude Haiku for dev (`anthropic.claude-3-haiku-20240307-v1:0`), Sonnet for demo (`anthropic.claude-3-sonnet-20240229-v1:0`)
+- **LLM:** AWS Bedrock — Claude 3.5 Sonnet (`anthropic.claude-3-5-sonnet-20241022-v2:0`)
 - **Vector Store:** FAISS (file-based, stored on S3 as binary + JSON metadata sidecar)
 - **MCP Server:** FastMCP (Python)
 - **Chat UI:** Streamlit
@@ -53,8 +53,8 @@ A serverless RAG (Retrieval-Augmented Generation) system on AWS that enables nat
 ### Bedrock Calls
 - Titan Embeddings: `bedrock-runtime` client, `invoke_model` with `amazon.titan-embed-text-v2:0`
 - Claude LLM: `bedrock-runtime` client, `invoke_model`
-- **Default to Haiku during development** (`anthropic.claude-3-haiku-20240307-v1:0`) — 12x cheaper than Sonnet
-- Switch to Sonnet for demo/interview (`anthropic.claude-3-sonnet-20240229-v1:0`) via env var `LLM_MODEL_ID`
+- **Default to Claude 3.5 Sonnet** (`anthropic.claude-3-5-sonnet-20241022-v2:0`) — best quality/cost balance
+- For cheaper alternative, use Haiku 3.5 (`anthropic.claude-3-5-haiku-20241022-v1:0`) via env var `LLM_MODEL_ID`
 - Always set `max_tokens` for Claude calls
 - Handle throttling with exponential backoff
 
@@ -178,8 +178,8 @@ cd deploy && ./setup.sh && ./deploy_lambdas.sh
 AWS_REGION=us-east-1
 S3_BUCKET=pediatric-research-rag
 EMBEDDING_MODEL_ID=amazon.titan-embed-text-v2:0
-LLM_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0       # dev (cheap)
-# LLM_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0    # demo (better quality)
+LLM_MODEL_ID=anthropic.claude-3-5-sonnet-20241022-v2:0    # production
+# LLM_MODEL_ID=anthropic.claude-3-5-haiku-20241022-v1:0   # cheaper alternative
 CHUNK_SIZE=500
 CHUNK_OVERLAP=50
 TOP_K=5

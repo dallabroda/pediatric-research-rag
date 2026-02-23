@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 S3_BUCKET = os.environ.get("S3_BUCKET", "pediatric-research-rag")
-LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "anthropic.claude-3-haiku-20240307-v1:0")
+LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 LOCAL_INDEX_DIR = os.environ.get("LOCAL_INDEX_DIR", "data/index")
 TOP_K = int(os.environ.get("TOP_K", "5"))
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "1024"))
