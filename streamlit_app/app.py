@@ -54,9 +54,7 @@ def get_config(key: str, default: str = "") -> str:
 # Configuration - supports both env vars and Streamlit secrets
 S3_BUCKET = get_config("S3_BUCKET", "pediatric-research-rag")
 LOCAL_INDEX_DIR = get_config("LOCAL_INDEX_DIR", "data/index")
-# Use Amazon Nova Lite by default (no model access approval needed)
-# Set LLM_MODEL_ID to anthropic.claude-3-haiku-20240307-v1:0 if you have Claude access
-LLM_MODEL_ID = get_config("LLM_MODEL_ID", "amazon.nova-lite-v1:0")
+LLM_MODEL_ID = get_config("LLM_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
 MAX_TOKENS = int(get_config("MAX_TOKENS", "1024"))
 
 # Ensure AWS credentials are loaded from secrets if present
@@ -67,7 +65,6 @@ get_config("AWS_REGION", "us-east-1")
 from lambdas.query.prompts import ContextChunk, build_no_context_response, build_user_prompt, SYSTEM_PROMPT
 from lambdas.query.retriever import FAISSRetriever
 from lambdas.query.multi_query import is_comparison_question, handle_comparison_question
-from streamlit_app.components.chat import add_assistant_message, add_user_message, clear_chat, render_chat
 from streamlit_app.components.citations import render_citations
 from streamlit_app.components.sidebar import render_sidebar
 from streamlit_app.components.data_quality import render_data_quality_dashboard
@@ -77,8 +74,65 @@ st.set_page_config(
     page_title="Pediatric Research RAG",
     page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
+
+# Custom CSS for chat UI
+st.markdown("""
+<style>
+    /* Hide Streamlit branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+
+    /* Chat container styling */
+    .stChatFloatingInputContainer {
+        bottom: 20px;
+        background-color: var(--background-color);
+    }
+
+    /* Make chat messages scrollable */
+    [data-testid="stChatMessageContainer"] {
+        max-height: calc(100vh - 250px);
+        overflow-y: auto;
+    }
+
+    /* Improve message styling */
+    .stChatMessage {
+        padding: 1rem;
+        border-radius: 0.5rem;
+    }
+
+    /* Stats bar styling */
+    .stats-container {
+        display: flex;
+        gap: 1rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid #333;
+        margin-bottom: 1rem;
+    }
+
+    .stat-item {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .stat-value {
+        font-size: 1.2rem;
+        font-weight: bold;
+    }
+
+    .stat-label {
+        font-size: 0.8rem;
+        color: #888;
+    }
+
+    /* Example buttons */
+    .example-btn {
+        margin: 0.25rem;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 @st.cache_resource
@@ -258,64 +312,21 @@ def ask_question(question: str, top_k: int = 5) -> tuple[str, list[dict], dict]:
 def render_confidence_badge(metadata: dict) -> None:
     """Render a confidence badge based on answer metadata."""
     confidence = metadata.get("confidence", "medium")
+    sources = metadata.get("unique_sources", 0)
 
     if confidence == "high":
-        st.success(f"Confidence: High | {metadata.get('unique_sources', 0)} sources")
+        st.caption(f"✅ High confidence · {sources} sources")
     elif confidence == "medium":
-        st.info(f"Confidence: Medium | {metadata.get('unique_sources', 0)} sources")
+        st.caption(f"ℹ️ Medium confidence · {sources} sources")
     else:
-        st.warning(f"Confidence: Low | Limited evidence")
-
-    if metadata.get("is_comparison"):
-        entities = metadata.get("entities", [])
-        coverage = metadata.get("entity_coverage", {})
-        st.caption(f"Comparison: {' vs '.join(entities)} | Coverage: {coverage}")
-
-
-def render_about_section() -> None:
-    """Render the About section explaining system capabilities."""
-    st.markdown("---")
-    st.subheader("About This System")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        **What This System Does:**
-        - Natural language Q&A over pediatric cancer research
-        - Cross-document comparison and synthesis
-        - Automatic source citation and provenance tracking
-        - Confidence scoring based on evidence quality
-
-        **Data Sources:**
-        - PubMed Central open-access research papers
-        - ClinicalTrials.gov trial registrations
-        - St. Jude Children's Research Hospital publications
-        """)
-
-    with col2:
-        st.markdown("""
-        **Key Differentiators:**
-        - No RAG frameworks - direct implementation for full control
-        - Data lineage tracking from source to response
-        - Extraction confidence and quality metrics
-        - Contradiction detection across sources
-        - Audit-ready query logging
-
-        **Try a Comparison:**
-        - "Compare ALL and AML treatment outcomes"
-        - "What's the difference between chemotherapy and immunotherapy?"
-        """)
+        st.caption(f"⚠️ Low confidence · Limited evidence")
 
 
 def main():
     """Main application entry point."""
-    # Header
-    st.title("Pediatric Cancer Research Intelligence")
-    st.markdown(
-        "A research intelligence platform for pediatric oncology. Ask questions, compare treatments, "
-        "and explore research with full source transparency and data quality metrics."
-    )
+    # Initialize session state
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
     # Check for index
     try:
@@ -325,161 +336,147 @@ def main():
 
         if vector_count == 0:
             st.warning(
-                "No documents indexed yet. Run the following to build the index:\n\n"
-                "```bash\n"
-                "python scripts/download_papers.py --count 5\n"
-                "python scripts/download_trials.py --count 5\n"
-                "python scripts/seed_index.py\n"
-                "```"
+                "No documents indexed yet. Run the seed_index.py script first."
             )
             return
 
     except Exception as e:
-        st.error(
-            f"Failed to load index: {e}\n\n"
-            "Make sure to run the seed_index.py script first."
-        )
+        st.error(f"Failed to load index: {e}")
         return
 
-    # Sidebar
+    # Get documents for sidebar
     documents = get_documents()
-    selected_doc = render_sidebar(documents)
+    papers = len([d for d in documents if d.get("doc_type") == "paper"])
+    trials = len([d for d in documents if d.get("doc_type") == "trial"])
 
-    # Create tabs for different views
-    tab_chat, tab_quality = st.tabs(["Research Assistant", "Data Quality"])
+    # Header with stats
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.title("🔬 Pediatric Cancer Research")
+    with col2:
+        st.caption(f"📄 {papers} papers · 🧪 {trials} trials · 📊 {vector_count:,} vectors")
 
-    with tab_chat:
-        # Corpus stats bar
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric("Documents", doc_count)
-        with col2:
-            st.metric("Vectors", f"{vector_count:,}")
-        with col3:
-            papers = len([d for d in documents if d.get("doc_type") == "paper"])
-            trials = len([d for d in documents if d.get("doc_type") == "trial"])
-            st.metric("Coverage", f"{papers} papers, {trials} trials")
+    # Sidebar for settings and document browser
+    with st.sidebar:
+        st.header("Settings")
+        top_k = st.slider("Sources to retrieve", 3, 10, 5)
+        st.session_state["top_k"] = top_k
 
         st.divider()
 
-        # Handle document selection
+        st.header("Documents")
+        selected_doc = render_sidebar(documents)
+
         if selected_doc:
-            st.subheader(f"Document: {selected_doc}")
             chunks = retriever.get_document_chunks(selected_doc)
             if chunks:
                 first = chunks[0]
-                st.markdown(f"**{first.get('doc_title', selected_doc)}**")
-                st.caption(f"Type: {first.get('doc_type', 'unknown')}")
+                st.markdown(f"**{first.get('doc_title', selected_doc)[:50]}...**")
                 if first.get("source_url"):
                     st.markdown(f"[View Original]({first['source_url']})")
 
-                with st.expander("View Content", expanded=True):
-                    full_text = "\n\n".join(c.get("chunk_text", "") for c in chunks)
-                    st.text_area("Document Text", full_text[:5000], height=300)
+    # Main chat area
+    chat_container = st.container()
 
-            st.divider()
+    # Display chat messages
+    with chat_container:
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
 
-        # Chat interface
-        render_chat()
+                # Show sources for assistant messages
+                if message["role"] == "assistant" and message.get("sources"):
+                    with st.expander(f"📚 Sources ({len(message['sources'])})"):
+                        render_citations(message["sources"])
 
-        # Chat input
-        top_k = st.session_state.get("top_k", 5)
+                # Show metadata
+                if message.get("metadata"):
+                    render_confidence_badge(message["metadata"])
 
-        if prompt := st.chat_input("Ask a question about pediatric cancer research..."):
-            # Add user message
-            add_user_message(prompt)
+    # Show example questions if no messages
+    if not st.session_state.messages:
+        st.markdown("### 💡 Try asking:")
 
-            with st.chat_message("user"):
-                st.markdown(prompt)
+        col1, col2 = st.columns(2)
 
-            # Generate response
-            with st.chat_message("assistant"):
-                # Show appropriate spinner based on question type
-                spinner_text = "Comparing sources..." if is_comparison_question(prompt) else "Searching research database..."
+        examples = [
+            "What is acute lymphoblastic leukemia?",
+            "What are survival rates for pediatric cancers?",
+            "Compare ALL and AML treatment approaches",
+            "What clinical trials are available for neuroblastoma?",
+        ]
 
-                with st.spinner(spinner_text):
-                    try:
-                        answer, sources, metadata = ask_question(prompt, top_k=top_k)
+        with col1:
+            if st.button(examples[0], use_container_width=True):
+                st.session_state.pending_question = examples[0]
+                st.rerun()
+            if st.button(examples[2], use_container_width=True):
+                st.session_state.pending_question = examples[2]
+                st.rerun()
 
-                        # Show comparison badge if applicable
-                        if metadata.get("is_comparison"):
-                            st.caption(f"Cross-document comparison: {' vs '.join(metadata.get('entities', []))}")
+        with col2:
+            if st.button(examples[1], use_container_width=True):
+                st.session_state.pending_question = examples[1]
+                st.rerun()
+            if st.button(examples[3], use_container_width=True):
+                st.session_state.pending_question = examples[3]
+                st.rerun()
 
-                        st.markdown(answer)
+    # Chat input at the bottom
+    if prompt := st.chat_input("Ask about pediatric cancer research..."):
+        process_question(prompt)
 
-                        # Confidence badge
-                        render_confidence_badge(metadata)
+    # Handle pending question from example buttons
+    if st.session_state.get("pending_question"):
+        question = st.session_state.pop("pending_question")
+        process_question(question)
 
-                        if sources:
-                            with st.expander(f"View Sources ({len(sources)})"):
-                                render_citations(sources)
 
-                        # Add to history
-                        add_assistant_message(answer, sources)
+def process_question(question: str):
+    """Process a user question and generate response."""
+    top_k = st.session_state.get("top_k", 5)
 
-                    except Exception as e:
-                        error_msg = f"Error generating response: {str(e)}"
-                        st.error(error_msg)
-                        add_assistant_message(error_msg, [])
+    # Add user message
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question,
+    })
 
-        # Example questions
-        if not st.session_state.get("messages"):
-            st.markdown("### Example Questions")
+    # Display user message
+    with st.chat_message("user"):
+        st.markdown(question)
 
-            col1, col2 = st.columns(2)
+    # Generate and display response
+    with st.chat_message("assistant"):
+        spinner_text = "🔄 Comparing sources..." if is_comparison_question(question) else "🔍 Searching research..."
 
-            with col1:
-                st.markdown("**Standard Queries:**")
-                if st.button("What is acute lymphoblastic leukemia?"):
-                    st.session_state.example_question = "What is acute lymphoblastic leukemia?"
-                    st.rerun()
+        with st.spinner(spinner_text):
+            try:
+                answer, sources, metadata = ask_question(question, top_k=top_k)
 
-                if st.button("What are the survival rates for pediatric cancers?"):
-                    st.session_state.example_question = "What are the survival rates for pediatric cancers?"
-                    st.rerun()
+                st.markdown(answer)
+                render_confidence_badge(metadata)
 
-            with col2:
-                st.markdown("**Comparison Queries:**")
-                if st.button("Compare ALL and AML treatment approaches"):
-                    st.session_state.example_question = "Compare ALL and AML treatment approaches"
-                    st.rerun()
+                if sources:
+                    with st.expander(f"📚 Sources ({len(sources)})"):
+                        render_citations(sources)
 
-                if st.button("What's the difference between chemotherapy and immunotherapy?"):
-                    st.session_state.example_question = "What's the difference between chemotherapy and immunotherapy for pediatric cancer?"
-                    st.rerun()
+                # Add to history
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": answer,
+                    "sources": sources,
+                    "metadata": metadata,
+                })
 
-        # Handle example question selection
-        if st.session_state.get("example_question"):
-            question = st.session_state.pop("example_question")
-            add_user_message(question)
-
-            with st.chat_message("user"):
-                st.markdown(question)
-
-            with st.chat_message("assistant"):
-                spinner_text = "Comparing sources..." if is_comparison_question(question) else "Searching research database..."
-
-                with st.spinner(spinner_text):
-                    answer, sources, metadata = ask_question(question, top_k=top_k)
-
-                    if metadata.get("is_comparison"):
-                        st.caption(f"Cross-document comparison: {' vs '.join(metadata.get('entities', []))}")
-
-                    st.markdown(answer)
-                    render_confidence_badge(metadata)
-
-                    if sources:
-                        with st.expander(f"View Sources ({len(sources)})"):
-                            render_citations(sources)
-
-                    add_assistant_message(answer, sources)
-
-        # About section at bottom
-        render_about_section()
-
-    with tab_quality:
-        # Data Quality Dashboard
-        render_data_quality_dashboard(retriever)
+            except Exception as e:
+                error_msg = f"Error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg,
+                    "sources": [],
+                })
 
 
 if __name__ == "__main__":

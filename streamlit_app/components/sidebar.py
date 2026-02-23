@@ -6,7 +6,7 @@ import streamlit as st
 
 def render_sidebar(documents: list[dict]) -> str | None:
     """
-    Render the sidebar with document explorer.
+    Render document list for sidebar.
 
     Args:
         documents: List of document metadata dicts
@@ -14,80 +14,57 @@ def render_sidebar(documents: list[dict]) -> str | None:
     Returns:
         Selected document ID or None
     """
-    with st.sidebar:
-        st.header("Research Documents")
+    # Document counts
+    papers = [d for d in documents if d.get("doc_type") == "paper"]
+    trials = [d for d in documents if d.get("doc_type") == "trial"]
 
-        # Document counts
-        papers = [d for d in documents if d.get("doc_type") == "paper"]
-        trials = [d for d in documents if d.get("doc_type") == "trial"]
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Papers", len(papers))
+    with col2:
+        st.metric("Trials", len(trials))
 
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Papers", len(papers))
-        with col2:
-            st.metric("Trials", len(trials))
+    st.divider()
 
-        st.divider()
+    # Filter options
+    doc_type_filter = st.selectbox(
+        "Filter by type",
+        options=["All", "Papers", "Trials"],
+        index=0,
+        label_visibility="collapsed",
+    )
 
-        # Filter options
-        doc_type_filter = st.selectbox(
-            "Filter by type",
-            options=["All", "Papers", "Trials"],
-            index=0,
-        )
+    # Filter documents
+    if doc_type_filter == "Papers":
+        filtered_docs = papers
+    elif doc_type_filter == "Trials":
+        filtered_docs = trials
+    else:
+        filtered_docs = documents
 
-        # Filter documents
-        if doc_type_filter == "Papers":
-            filtered_docs = papers
-        elif doc_type_filter == "Trials":
-            filtered_docs = trials
-        else:
-            filtered_docs = documents
+    # Document list (scrollable)
+    selected_doc = None
 
-        st.divider()
+    for doc in filtered_docs[:20]:  # Limit to 20 for performance
+        doc_id = doc.get("document_id", "")
+        title = doc.get("title", doc_id)
+        doc_type = doc.get("doc_type", "unknown")
 
-        # Document list
-        st.subheader("Documents")
+        # Truncate long titles
+        display_title = title[:35] + "..." if len(title) > 35 else title
+        icon = "📄" if doc_type == "paper" else "🧪"
 
-        selected_doc = None
+        if st.button(f"{icon} {display_title}", key=f"doc_{doc_id}", use_container_width=True):
+            selected_doc = doc_id
 
-        for doc in filtered_docs:
-            doc_id = doc.get("document_id", "")
-            title = doc.get("title", doc_id)
-            doc_type = doc.get("doc_type", "unknown")
+    if len(filtered_docs) > 20:
+        st.caption(f"Showing 20 of {len(filtered_docs)} documents")
 
-            # Truncate long titles
-            display_title = title[:40] + "..." if len(title) > 40 else title
+    st.divider()
 
-            # Create clickable expander for each doc
-            with st.expander(f"{doc_id}", expanded=False):
-                st.markdown(f"**{display_title}**")
-                st.caption(f"Type: {doc_type}")
-
-                if doc.get("source_url"):
-                    st.markdown(f"[View Source]({doc['source_url']})")
-
-                if doc.get("chunks_count"):
-                    st.caption(f"Chunks: {doc['chunks_count']}")
-
-                if st.button("View Details", key=f"view_{doc_id}"):
-                    selected_doc = doc_id
-
-        st.divider()
-
-        # Clear chat button
-        if st.button("Clear Chat History", type="secondary"):
-            st.session_state.messages = []
-            st.rerun()
-
-        # Settings
-        with st.expander("Settings"):
-            top_k = st.slider(
-                "Results per query",
-                min_value=1,
-                max_value=10,
-                value=5,
-            )
-            st.session_state.top_k = top_k
+    # Clear chat button
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
 
     return selected_doc
