@@ -18,7 +18,7 @@ logger.setLevel(logging.INFO)
 S3_BUCKET = os.environ.get("S3_BUCKET", "pediatric-research-rag")
 INDEX_PREFIX = os.environ.get("INDEX_PREFIX", "processed/index/")
 EMBEDDING_MODEL_ID = os.environ.get("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
-LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "anthropic.claude-3-5-sonnet-20241022-v2:0")
+LLM_MODEL_ID = os.environ.get("LLM_MODEL_ID", "amazon.nova-pro-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 

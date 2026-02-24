@@ -18,10 +18,8 @@ S3_INDEX_PREFIX = "processed/index/"
 EMBEDDING_MODEL_ID = os.getenv("EMBEDDING_MODEL_ID", "amazon.titan-embed-text-v2:0")
 EMBEDDING_DIMENSION = 1024  # Titan V2 output dimension
 
-# LLM — Claude Sonnet 4.5 for production (best quality)
-# Uses inference profile ID for cross-region inference
-# Sonnet 4.5: ~$3/$15 per 1M input/output tokens
-LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "us.anthropic.claude-sonnet-4-5-20250929-v1:0")
+# LLM — Amazon Nova Pro (no approval required, works immediately)
+LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "amazon.nova-pro-v1:0")
 LLM_MODEL_ID_CHEAP = "us.anthropic.claude-3-5-haiku-20241022-v1:0"  # cheaper alternative
 
 # Chunking
